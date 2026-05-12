@@ -707,7 +707,9 @@ export default function App() {
             </div>
           )}
 
-          {view === "tracker" && selectedReport && <ReportDetail report={selectedReport} />}
+         {view === "tracker" && selectedReport && (
+  <ReportDetail key={selectedReport.id} report={selectedReport} />
+)}
 
           {/* Analytics */}
           {view === "analytics" && (
