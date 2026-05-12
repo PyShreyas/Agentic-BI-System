@@ -29,8 +29,8 @@ const PRIORITIES = [
   { key: "low", label: "Low", color: "#639922", bg: "#EAF3DE" },
 ];
 
-const MODULES = ["Finance", "Operations", "HR", "Supply Chain", "Commercial", "IT", "Analytics", "Compliance", "Marketing"];
-const OWNERS = ["Alice Chen", "Bob Kumar", "Carol Smith", "David Park", "Emma Wilson", "Frank Lee", "Grace Tan", "Henry Müller"];
+const MODULES = ["QHSE", "QDMS", "Audit and Inspection", "PMS", "Procurement"];
+const OWNERS = ["Abin Alex", "Shreyas Krishna", "Nithuna V", "Jastin Willy", "Sudhanshu S", "Sarah"];
 
 const CREDENTIALS = { "MA-BI": "Welcome@123" };
 
