@@ -751,7 +751,7 @@ export default function App() {
               </button>
             )}
             {view === "tracker" && !selectedReport && (
-              <button onClick={() => setShowAddModal(true) style={{ ...S.btn("primary"), fontWeight: 600 }}>
+              <button onClick={() => setShowAddModal(true)} style={{ ...S.btn("primary"), fontWeight: 600 }}>
                 <i className="ti ti-plus" /> Add Report
               </button>
             )}
