@@ -72,7 +72,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     setMessages(m => [...m, { role: "user", text }]);
     setSending(true);
     try {
-      const response = await fetch("/api/ask-bi", {
+      const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, context })
