@@ -6,6 +6,7 @@ import {
 import { db } from "./firebase";
 import MyDay from "./MyDay";
 import AskMyBI from "./AskMyBI";
+import History from "./History";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
@@ -656,6 +657,7 @@ export default function App() {
     { key: "tracker", icon: "ti-report-analytics", label: "Report Tracker" },
     { key: "analytics", icon: "ti-chart-bar", label: "Analytics" },
     { key: "activity", icon: "ti-activity", label: "Activity Log" },
+    { key: "history", icon: "ti-history", label: "Task History" },
   ];
 
   if (!authed) {
@@ -743,6 +745,7 @@ export default function App() {
               {view === "tracker" && (selectedReport ? selectedReport.name : "Report Tracker")}
               {view === "analytics" && "Analytics"}
               {view === "activity" && "Activity Log"}
+              {view === "history" && "Task History"}
             </h1>
             {view === "tracker" && selectedReport && (
               <p style={{ margin: 0, fontSize: 12, color: C.textMuted }}>{selectedReport.module} · {selectedReport.owner}</p>
@@ -788,6 +791,9 @@ export default function App() {
 
           {/* Ask My BI */}
           {view === "askbi" && <AskMyBI C={C} S={S} reports={reports} currentUser={currentUser} />}
+
+          {/* Task History */}
+          {view === "history" && <History C={C} S={S} reports={reports} currentUser={currentUser} />}
 
           {/* Dashboard */}
           {view === "dashboard" && (
