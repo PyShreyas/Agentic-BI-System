@@ -6,6 +6,9 @@ import { db } from "./firebase";
 
 const QUICK_PROMPTS = [
   "What should I work on today?",
+  "Give me my morning briefing.",
+  "What should I do next?",
+  "Help me prioritize my day.",
   "What is overdue?",
   "What is currently blocked?",
   "Give me my BI workload summary.",
@@ -108,6 +111,7 @@ function detectIntent(prompt) {
   if (/blocked|blocker/.test(q)) return "blocked";
   if (/overdue|past due|late/.test(q)) return "overdue";
   if (/workload|summary|how am i doing|how much work/.test(q)) return "workload";
+  if (/morning briefing|morning brief|start my day|daily briefing|plan my day|prioritize my day|help me prioritize|what should i do next|next task|next thing/.test(q)) return "myDay";
   if (/what should i (work|do)|what do i work on|today('s)? (work|tasks)|tasks? today/.test(q)) return "today";
   if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
   if (/delete|remove|archive.*task/.test(q)) return "deleteTask";
@@ -188,6 +192,19 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   const inProgress = active.filter(t => t.status === "in_progress");
   const completed = tasks.filter(t => t.status === "done" && (dateKey(t.completedAt) === today || dateKey(t.updatedAt) === today));
   const staleReports = reports.filter(r => r.status !== "deployed_live" && r.updatedAt && (Date.now() - (r.updatedAt.toDate ? r.updatedAt.toDate().getTime() : new Date(r.updatedAt).getTime())) > 3 * 86400000);
+
+  if (intent === "myDay") {
+    const ranked = sortByPriorityAndDate([...overdue, ...dueToday, ...high.filter(t => !overdue.some(x => x.id === t.id) && !dueToday.some(x => x.id === t.id))]);
+    const attentionReports = reportsNeedingAttention(reports);
+    const staleCount = reports.filter(isStaleReport).length;
+    const nextTask = ranked[0] || inProgress[0];
+
+    if (!ranked.length && !inProgress.length) {
+      return `Morning briefing:\n\n• No urgent or due tasks are currently on your board.\n• Reports needing attention: ${attentionReports.length}.\n• Stale reports: ${staleCount}.\n\nRecommendation: review the backlog and choose the next BI priority.`;
+    }
+
+    return `Morning briefing:\n\nTasks\n• Due today: ${dueToday.length}\n• Overdue: ${overdue.length}\n• Critical/High active: ${high.length}\n• Blocked: ${blocked.length}\n• In progress: ${inProgress.length}\n\nReports\n• Need attention: ${attentionReports.length}\n• Stale: ${staleCount}\n\nRecommended order\n${ranked.slice(0, 5).map((t, i) => `${i + 1}. ${t.title} — ${t.priority || "medium"} — ${t.dueDate && t.dueDate < today ? "Overdue" : "Due today"}`).join("\n") || "• Continue your current in-progress work."}\n\nNext best action: ${nextTask ? nextTask.title : "Continue your current in-progress work."}`;
+  }
 
   if (intent === "today") {
     const candidates = sortByPriorityAndDate([...overdue, ...dueToday, ...high.filter(t => !dueToday.some(x => x.id === t.id))]);
@@ -433,7 +450,8 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       {[
         ["🧠 Local Orchestrator", "Routes your question to a deterministic BI agent without an external AI service."],
         ["📋 Task Agent", "Reads tasks, priorities and deadlines, and prepares approved task actions."],
-        ["📊 Report Agent", "Summarizes report statuses and identifies stale reports."],
+        ["📊 Report Agent", "Searches reports by client, module and name, and identifies stale or attention-needed reports."],
+        ["☀️ My Day Agent", "Builds a morning briefing, ranks today's work, surfaces overdue items and recommends the next action."],
         ["🧪 QA Ready", "The next agent layer can add deterministic data-quality and release checks."]
       ].map(([title, desc]) => <div key={title} style={{ ...S.card, padding: 13 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{title}</div>
