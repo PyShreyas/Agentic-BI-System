@@ -118,7 +118,7 @@ function detectIntent(prompt) {
   if (/how many tasks|task count|number of tasks/.test(q)) return "taskCount";
   if (/stale|outdated|old reports?/.test(q)) return "staleReports";
   if (/need attention|needs attention|at risk|attention needed|which reports? should i focus/.test(q)) return "reportAttention";
-  if (/report.*(for|from|of)|reports? (for|from|of)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) return "reportSearch";
+  if (/report.*(for|from|of|in)|reports? (for|from|of|in)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) return "reportSearch";
   if (/reports? (in|at)|report status|reports? status|which reports?/.test(q)) return "reports";
   if (/delete|remove.*task/.test(q)) return "deleteTask";
   if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
