@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase";
 
 const QUICK_PROMPTS = [
@@ -14,7 +14,11 @@ function dateKey(d = new Date()) {
   if (Number.isNaN(value.getTime())) return "";
   return [value.getFullYear(), String(value.getMonth() + 1).padStart(2, "0"), String(value.getDate()).padStart(2, "0")].join("-");
 }
-
+function localDateOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return dateKey(d);
+}
 function buildFallback(prompt, reports, tasks) {
   const today = dateKey();
   const active = tasks.filter(t => t.status !== "done");
@@ -23,31 +27,23 @@ function buildFallback(prompt, reports, tasks) {
   const overdue = active.filter(t => t.dueDate && t.dueDate < today);
   const high = active.filter(t => ["critical", "high"].includes(t.priority));
   const deployed = reports.filter(r => r.status === "deployed_live");
-
   const q = prompt.toLowerCase();
   if (q.includes("today") || q.includes("work on")) {
     if (!todayTasks.length) return "You have no active tasks planned for today. I recommend reviewing the backlog and selecting one high-priority BI task.";
     return `Today's active work: ${todayTasks.map(t => t.title).join(", ")}. Start with ${high.find(t => todayTasks.some(x => x.id === t.id))?.title || todayTasks[0].title}.`;
   }
-  if (q.includes("blocked")) {
-    return blocked.length ? `Currently blocked: ${blocked.map(t => t.title).join(", ")}.` : "No tasks are currently marked as blocked.";
-  }
-  if (q.includes("stand-up") || q.includes("standup")) {
-    return `Stand-up draft:\n\nCompleted: Review your completed tasks in My Day.\n\nIn Progress: ${active.filter(t => t.status === "in_progress").map(t => t.title).join(", ") || "No tasks currently marked In Progress."}\n\nBlocked: ${blocked.map(t => t.title).join(", ") || "None."}\n\nToday: ${todayTasks.map(t => t.title).join(", ") || "Plan the next priority task."}`;
-  }
-  if (q.includes("workload") || q.includes("summary")) {
-    return `BI workload snapshot: ${reports.length} reports tracked, ${active.length} active tasks, ${blocked.length} blocked, ${overdue.length} overdue, and ${deployed.length} reports deployed live.`;
-  }
+  if (q.includes("blocked")) return blocked.length ? `Currently blocked: ${blocked.map(t => t.title).join(", ")}.` : "No tasks are currently marked as blocked.";
+  if (q.includes("stand-up") || q.includes("standup")) return `Stand-up draft:\n\nCompleted: Review your completed tasks in My Day.\n\nIn Progress: ${active.filter(t => t.status === "in_progress").map(t => t.title).join(", ") || "No tasks currently marked In Progress."}\n\nBlocked: ${blocked.map(t => t.title).join(", ") || "None."}\n\nToday: ${todayTasks.map(t => t.title).join(", ") || "Plan the next priority task."}`;
+  if (q.includes("workload") || q.includes("summary")) return `BI workload snapshot: ${reports.length} reports tracked, ${active.length} active tasks, ${blocked.length} blocked, ${overdue.length} overdue, and ${deployed.length} reports deployed live.`;
   return "I can help with your BI workload, tasks, reports, blockers, SQL/DAX planning, QA, and documentation. Ask me a specific question or use one of the quick prompts.";
 }
 
 export default function AskMyBI({ C, S, reports = [], currentUser }) {
   const [tasks, setTasks] = useState([]);
-  const [messages, setMessages] = useState([
-    { role: "assistant", text: `Hi ${currentUser || "Shreyas"} — I'm your BI Analyst Assistant. I can use your current report and task context to help you plan work, investigate issues, and prepare BI outputs.` }
-  ]);
+  const [messages, setMessages] = useState([{ role: "assistant", text: `Hi ${currentUser || "Shreyas"} — I'm your BI Analyst Assistant. I can use your current report and task context to help you plan work, investigate issues, and prepare BI outputs.` }]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
 
   useEffect(() => onSnapshot(collection(db, "tasks"), s => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))), []);
 
@@ -61,9 +57,48 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     tasks: tasks.map(t => ({
       id: t.id, title: t.title, category: t.category || "general",
       status: t.status, priority: t.priority, dueDate: t.dueDate || "",
-      reportId: t.reportId || "", estimatedHours: t.estimatedHours || ""
+      reportId: t.reportId || "", estimatedHours: t.estimatedHours || "",
+      createdDate: t.createdDate || ""
     }))
   }), [currentUser, reports, tasks]);
+
+  const executeApprovedAction = async () => {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    try {
+      if (action.type === "createTask") {
+        const a = action.arguments || {};
+        await addDoc(collection(db, "tasks"), {
+          title: String(a.title || "").trim(),
+          owner: currentUser,
+          category: a.category || "general",
+          priority: a.priority || "medium",
+          status: "todo",
+          dueDate: a.dueDate || "",
+          reportId: a.reportId || "",
+          estimatedHours: a.estimatedHours || "",
+          actualHours: "",
+          createdDate: new Date().toISOString(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        setMessages(m => [...m, { role: "assistant", text: `Approved and created the task: "${a.title}".` }]);
+      } else if (action.type === "updateTask") {
+        const a = action.arguments || {};
+        const payload = { updatedAt: serverTimestamp() };
+        if (a.status) payload.status = a.status;
+        if (a.priority) payload.priority = a.priority;
+        if (a.dueDate !== undefined) payload.dueDate = a.dueDate;
+        if (a.status === "in_progress") payload.startedAt = new Date().toISOString();
+        if (a.status === "done") payload.completedAt = new Date().toISOString();
+        await updateDoc(doc(db, "tasks", a.taskId), payload);
+        setMessages(m => [...m, { role: "assistant", text: `Approved and updated task ${a.taskId}.` }]);
+      }
+      setPendingAction(null);
+    } catch (error) {
+      setMessages(m => [...m, { role: "assistant", text: `The approved action could not be completed: ${error.message || "Unknown error"}` }]);
+    }
+  };
 
   const send = async (forcedText) => {
     const text = (forcedText ?? input).trim();
@@ -71,6 +106,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     setInput("");
     setMessages(m => [...m, { role: "user", text }]);
     setSending(true);
+    setPendingAction(null);
     try {
       const response = await fetch("/api/ai", {
         method: "POST",
@@ -80,6 +116,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "AI request failed");
       setMessages(m => [...m, { role: "assistant", text: data.content || "I could not generate a response." }]);
+      if (data.pendingAction) setPendingAction(data.pendingAction);
     } catch (error) {
       const fallback = buildFallback(text, reports, tasks);
       setMessages(m => [...m, { role: "assistant", text: fallback + "\n\nAI backend note: " + (error.message || "API unavailable") }]);
@@ -92,11 +129,11 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     <div style={{ ...S.card, background: `linear-gradient(135deg,${C.accent} 0%,#0B5FFF 100%)`, border: "none", color: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, opacity: .72, textTransform: "uppercase", letterSpacing: ".08em" }}>Agentic BI Foundation</div>
+          <div style={{ fontSize: 10, fontWeight: 700, opacity: .72, textTransform: "uppercase", letterSpacing: ".08em" }}>Agentic BI · Tool Calling</div>
           <h2 style={{ margin: "5px 0 3px", fontSize: 25 }}>Ask My BI</h2>
-          <div style={{ fontSize: 13, opacity: .82 }}>Your first AI layer for tasks, reports, blockers and analyst workflows.</div>
+          <div style={{ fontSize: 13, opacity: .82 }}>The Orchestrator can now inspect your live BI context and prepare task actions for approval.</div>
         </div>
-        <div style={{ padding: "7px 10px", borderRadius: 20, background: "#ffffff18", border: "1px solid #ffffff35", fontSize: 11, fontWeight: 700 }}>BI ORCHESTRATOR · V1</div>
+        <div style={{ padding: "7px 10px", borderRadius: 20, background: "#ffffff18", border: "1px solid #ffffff35", fontSize: 11, fontWeight: 700 }}>ORCHESTRATOR · V1.1</div>
       </div>
     </div>
 
@@ -104,34 +141,47 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       {QUICK_PROMPTS.map(p => <button key={p} onClick={() => send(p)} disabled={sending} style={{ ...S.btn(), fontSize: 11 }}>{p}</button>)}
     </div>
 
+    {pendingAction && (
+      <div style={{ ...S.card, border: "1px solid #F59E0B", background: "#FFFBEB" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: ".05em" }}>Approval Required</div>
+        <div style={{ marginTop: 6, fontSize: 13, color: C.text }}>
+          {pendingAction.type === "createTask"
+            ? `Create task: "${pendingAction.arguments?.title}" · ${pendingAction.arguments?.priority || "medium"} · ${pendingAction.arguments?.category || "general"} · Due ${pendingAction.arguments?.dueDate || "No date"}`
+            : `Update task ${pendingAction.arguments?.taskId}`}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={executeApprovedAction} style={S.btn("primary")}>Approve & Execute</button>
+          <button onClick={() => setPendingAction(null)} style={S.btn()}>Cancel</button>
+        </div>
+      </div>
+    )}
+
     <div style={{ ...S.card, minHeight: 500, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: `1px solid ${C.border}` }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 14, color: C.text }}>BI Analyst Assistant</h3>
-          <p style={{ margin: "3px 0 0", fontSize: 11, color: C.textMuted }}>Context: {reports.length} reports · {tasks.length} tasks</p>
+          <p style={{ margin: "3px 0 0", fontSize: 11, color: C.textMuted }}>Context: {reports.length} reports · {tasks.length} tasks · 6 tools</p>
         </div>
         <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>● READY</span>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "16px 2px" }}>
-        {messages.map((m, i) => <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "82%", padding: "11px 13px", borderRadius: 11, background: m.role === "user" ? C.accent : C.bg, color: m.role === "user" ? "#fff" : C.text, border: m.role === "user" ? "none" : `1px solid ${C.border}`, fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-          {m.text}
-        </div>)}
+        {messages.map((m, i) => <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "82%", padding: "11px 13px", borderRadius: 11, background: m.role === "user" ? C.accent : C.bg, color: m.role === "user" ? "#fff" : C.text, border: m.role === "user" ? "none" : `1px solid ${C.border}`, fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.text}</div>)}
         {sending && <div style={{ alignSelf: "flex-start", color: C.textMuted, fontSize: 12 }}>Thinking…</div>}
       </div>
 
       <div style={{ display: "flex", gap: 8, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={sending} style={{ ...S.input, flex: 1 }} placeholder="Ask about your reports, tasks, blockers, SQL, DAX or today's priorities…" />
+        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={sending} style={{ ...S.input, flex: 1 }} placeholder="Ask about reports, tasks, blockers, SQL, DAX or actions…" />
         <button onClick={() => send()} disabled={sending || !input.trim()} style={S.btn("primary")}>{sending ? "..." : "Ask"}</button>
       </div>
     </div>
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 10 }}>
       {[
-        ["🧠 Orchestrator", "Understands your request and routes future work to specialist agents."],
+        ["🧠 Orchestrator", "Routes questions to current BI context and tools."],
+        ["📝 Task Agent", "Can prepare task creation and updates for approval."],
         ["🗄 SQL Agent", "Next: source investigation, joins, grain and data-quality checks."],
-        ["📊 Power BI Agent", "Next: DAX, model relationships, visuals and report logic."],
-        ["🧪 QA Agent", "Next: validation, anomaly checks and release readiness."]
+        ["📊 Power BI Agent", "Next: DAX, model relationships, visuals and report logic."]
       ].map(([title, desc]) => <div key={title} style={{ ...S.card, padding: 13 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{title}</div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>{desc}</div>
