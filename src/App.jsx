@@ -40,7 +40,7 @@ const REMARK_CAT_MAP = Object.fromEntries(REMARK_CATEGORIES.map(c => [c.key, c])
 
 const MODULES = ["QHSE", "QDMS", "Audit and Inspection", "PMS", "Procurement"];
 const OWNERS = ["Abin Alex", "Shreyas Krishna", "Nithuna V", "Jastin Willy", "Sudhanshu S", "Sarah"];
-const CREDENTIALS = { "MA-BI": "Welcome@123" };
+const CREDENTIALS = { "Shreyas-BI": "Shreyas@211003" };
 
 function fmtDate(ts) {
   if (!ts) return "—";
@@ -65,11 +65,9 @@ function timeAgo(ts) {
 }
 
 const MariAppsLogo = ({ size = 36 }) => (
-  <img
-    src={`data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABkAGQDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAQFBgMHAgH/xAAzEAABAwMCBAQEBgMBAAAAAAABAAIDBAURBiExEkFRYRMicYEUMkJSkbHBIzNiodH/xAAYAQADAQEAAAAAAAAAAAAAAAAAAQIDBP/EAB4RAQEBAQADAQEBAAAAAAAAAAABEQISAxMhMf/aAAwDAQACEQMRAD8A7AAAAAAAAAAAAAAAAAAAAAAA5uaHNIIBB6ELnHhXAoO1cXIIXGPCqDjjdXKl2ZUZqnqGqzKXP4cCbfJFPIrrtomJFRGtVc9SqbmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPauba1XtVOTkX6VT5LyFIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//Z`}
-    alt="MariApps"
-    style={{ width: size, height: size, borderRadius: 8, objectFit: "cover" }}
-  />
+  <div style={{ width: size, height: size, borderRadius: Math.round(size * 0.22), display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #072E55, #0B5FFF)", color: "#fff" }}>
+    <i className="ti ti-chart-bar" style={{ fontSize: Math.round(size * 0.5) }} />
+  </div>
 );
 
 const StatusBadge = ({ statusKey, small }) => {
@@ -663,9 +661,9 @@ export default function App() {
         <div style={{ background: "#fff", borderRadius: 20, padding: "2.5rem", width: "100%", maxWidth: 420, boxShadow: "0 25px 60px rgba(11,95,255,0.25)", boxSizing: "border-box" }}>
           <div style={{ textAlign: "center", marginBottom: "2rem" }}>
             <div style={{ width: 80, height: 80, margin: "0 auto 14px", borderRadius: 16, overflow: "hidden", border: "2px solid #EAF2FF", display: "flex", alignItems: "center", justifyContent: "center", background: "#EAF2FF" }}>
-              <img src={`data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABkAGQDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAQFBgMHAgH/xAAzEAABAwMCBAQEBgMBAAAAAAABAAIDBAURBiExEkFRYRMicYEUMkJSkbHBIzNiodH/xAAYAQADAQEAAAAAAAAAAAAAAAAAAQIDBP/EAB4RAQEBAQADAQEBAAAAAAAAAAABEQISAxMhMf/aAAwDAQACEQMRAD8A7AAAAAAAAAAAAAAAAAAAAAAA5uaHNIIBB6ELnHhXAoO1cXIIXGPCqDjjdXKl2ZUZqnqGqzKXP4cCbfJFPIrrtomJFRGtVc9SqbmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPaublBd7VxZj0H/lVkpO1VRHhF7X3VmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPaublBd7VxZj0H/lVkpO1VRHhF7X3VmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPaubl/2Q==`} alt="MariApps" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #072E55, #0B5FFF)", color: "#fff" }}><i className="ti ti-chart-bar" style={{ fontSize: 30 }} /></div>
             </div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "#0F172A" }}>MA-BI Portal</h1>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "#0F172A" }}>Shreyas BI Space</h1>
             <p style={{ margin: "6px 0 0", color: "#64748B", fontSize: 14 }}>Report Tracking & Documentation System</p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -682,7 +680,7 @@ export default function App() {
               Sign In
             </button>
           </div>
-          <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 12, color: "#94A3B8" }}>Powered by MariApps Marine Solutions</p>
+          <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 12, color: "#94A3B8" }}>Personal BI Workspace</p>
         </div>
       </div>
     );
@@ -696,11 +694,11 @@ export default function App() {
       <div style={{ width: sidebarOpen ? 230 : 64, minWidth: sidebarOpen ? 230 : 64, background: C.sidebar, borderRight: `1px solid ${C.border}`, transition: "all 0.2s", display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0, overflow: "hidden", boxShadow: "2px 0 12px rgba(11,95,255,0.06)" }}>
         <div style={{ padding: "14px 12px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 36, height: 36, minWidth: 36, borderRadius: 9, overflow: "hidden", border: "1px solid #EAF2FF" }}>
-            <img src={`data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABkAGQDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAQFBgMHAgH/xAAzEAABAwMCBAQEBgMBAAAAAAABAAIDBAURBiExEkFRYRMicYEUMkJSkbHBIzNiodH/xAAYAQADAQEAAAAAAAAAAAAAAAAAAQIDBP/EAB4RAQEBAQADAQEBAAAAAAAAAAABEQISAxMhMf/aAAwDAQACEQMRAD8A7AAAAAAAAAAAAAAAAAAAAAAA5uaHNIIBB6ELnHhXAoO1cXIIXGPCqDjjdXKl2ZUZqnqGqzKXP4cCbfJFPIrrtomJFRGtVc9SqbmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPaublBd7VxZj0H/lVkpO1VRHhF7X3VmXFVS3FRValfn4LUhVNFVFRV6KuFAAAAAAAAAAAAAAAAAAAADUx7mORzVVFTkqLhUKh+/DMK9q5VyT6vghNe9rmI5q5a5c8K04vbxjXNVHIqovJVRVyijR0cAAAAAAAAAAAAAAAAAAAAAB0Y8sflex7mPaubl/2Q==`} alt="MariApps" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #072E55, #0B5FFF)", color: "#fff" }}><i className="ti ti-chart-bar" style={{ fontSize: 30 }} /></div>
           </div>
           {sidebarOpen && (
             <div>
-              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text }}>MA-BI Portal</p>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text }}>Shreyas BI Space</p>
               <p style={{ margin: 0, fontSize: 10, color: C.textMuted }}>MariApps</p>
             </div>
           )}
