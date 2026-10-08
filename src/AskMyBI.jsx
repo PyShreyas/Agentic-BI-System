@@ -1,69 +1,245 @@
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import {
+  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp
+} from "firebase/firestore";
 import { db } from "./firebase";
 
 const QUICK_PROMPTS = [
   "What should I work on today?",
+  "What is overdue?",
   "What is currently blocked?",
-  "Give me a summary of my BI workload.",
+  "Give me my BI workload summary.",
   "Generate my stand-up update."
 ];
 
-function dateKey(d = new Date()) {
-  const value = d?.toDate ? d.toDate() : new Date(d);
-  if (Number.isNaN(value.getTime())) return "";
-  return [value.getFullYear(), String(value.getMonth() + 1).padStart(2, "0"), String(value.getDate()).padStart(2, "0")].join("-");
+const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+const STATUS_LABELS = {
+  todo: "To Do",
+  in_progress: "In Progress",
+  blocked: "Blocked",
+  done: "Done"
+};
+
+function dateKey(value = new Date()) {
+  const d = value?.toDate ? value.toDate() : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
 }
 
-function buildFallback(prompt, reports, tasks) {
-  const today = dateKey();
-  const active = tasks.filter(t => t.status !== "done");
-  const todayTasks = active.filter(t => t.dueDate === today || dateKey(t.createdAt) === today);
-  const blocked = active.filter(t => t.status === "blocked");
-  const overdue = active.filter(t => t.dueDate && t.dueDate < today);
-  const high = active.filter(t => ["critical", "high"].includes(t.priority));
-  const deployed = reports.filter(r => r.status === "deployed_live");
+function addDaysKey(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return dateKey(d);
+}
 
+function activeTasks(tasks) {
+  return tasks.filter(t => t.status !== "done");
+}
+
+function sortByPriorityAndDate(tasks) {
+  return [...tasks].sort((a, b) =>
+    (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9) ||
+    String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31"))
+  );
+}
+
+function detectIntent(prompt) {
+  const q = prompt.toLowerCase().trim();
+
+  if (/stand[- ]?up|daily update/.test(q)) return "standup";
+  if (/blocked|blocker/.test(q)) return "blocked";
+  if (/overdue|past due|late/.test(q)) return "overdue";
+  if (/workload|summary|how am i doing|how much work/.test(q)) return "workload";
+  if (/what should i (work|do)|what do i work on|today('s)? (work|tasks)|tasks? today/.test(q)) return "today";
+  if (/create|add|new task/.test(q)) return "createTask";
+  if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
+  if (/delete|remove|archive.*task/.test(q)) return "deleteTask";
+  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
+  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
+  if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
+  if (/high priority|critical|urgent/.test(q)) return "priority";
+  if (/how many tasks|task count|number of tasks/.test(q)) return "taskCount";
+  if (/reports? (in|at)|report status|reports? status|which reports?/.test(q)) return "reports";
+  if (/delete|remove.*task/.test(q)) return "deleteTask";
+  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
+  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
+  if (/in progress|start.*task|working on/.test(q)) return "updateStatus";
+  return "help";
+}
+
+function findTaskMatches(prompt, tasks) {
   const q = prompt.toLowerCase();
-  if (q.includes("today") || q.includes("work on")) {
-    if (!todayTasks.length) return "You have no active tasks planned for today. I recommend reviewing the backlog and selecting one high-priority BI task.";
-    return `Today's active work: ${todayTasks.map(t => t.title).join(", ")}. Start with ${high.find(t => todayTasks.some(x => x.id === t.id))?.title || todayTasks[0].title}.`;
+  return tasks
+    .filter(t => t.title && q.includes(t.title.toLowerCase()))
+    .sort((a, b) => b.title.length - a.title.length);
+}
+
+function findTaskMention(prompt, tasks) {
+  const matches = findTaskMatches(prompt, tasks);
+  if (matches.length) return matches[0];
+  const q = prompt.toLowerCase();
+  const words = q.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  const scored = tasks.filter(t => t.title).map(t => {
+    const titleWords = t.title.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+    const score = titleWords.filter(w => words.includes(w)).length;
+    return { task: t, score };
+  }).filter(x => x.score > 0).sort((a,b) => b.score-a.score || a.task.title.length-b.task.title.length);
+  return scored[0]?.task || null;
+  return tasks
+    .filter(t => t.title)
+    .sort((a, b) => b.title.length - a.title.length)
+    .find(t => q.includes(t.title.toLowerCase()));
+}
+
+function parsePriority(prompt) {
+  const q = prompt.toLowerCase();
+  if (/critical/.test(q)) return "critical";
+  if (/high|urgent/.test(q)) return "high";
+  if (/medium/.test(q)) return "medium";
+  if (/low/.test(q)) return "low";
+  return "";
+}
+
+function parseDueDate(prompt) {
+  const q = prompt.toLowerCase();
+  if (/tomorrow/.test(q)) return addDaysKey(1);
+  if (/today/.test(q)) return dateKey();
+  const match = q.match(/(20\\d{2}-\\d{2}-\\d{2})/);
+  return match ? match[1] : "";
+}
+
+function parseStatus(prompt) {
+  const q = prompt.toLowerCase();
+  if (/blocked/.test(q)) return "blocked";
+  if (/in progress|start.*task|working on/.test(q)) return "in_progress";
+  if (/to do|todo|backlog/.test(q)) return "todo";
+  if (/done|complete|completed/.test(q)) return "done";
+  return "";
+}
+
+function buildAnswer(intent, tasks, reports) {
+  const today = dateKey();
+  const tomorrow = addDaysKey(1);
+  const active = activeTasks(tasks);
+  const overdue = active.filter(t => t.dueDate && t.dueDate < today);
+  const dueToday = active.filter(t => t.dueDate === today);
+  const high = active.filter(t => ["critical", "high"].includes(t.priority));
+  const blocked = active.filter(t => t.status === "blocked");
+  const inProgress = active.filter(t => t.status === "in_progress");
+  const completed = tasks.filter(t => t.status === "done" && (dateKey(t.completedAt) === today || dateKey(t.updatedAt) === today));
+  const staleReports = reports.filter(r => r.status !== "deployed_live" && r.updatedAt && (Date.now() - (r.updatedAt.toDate ? r.updatedAt.toDate().getTime() : new Date(r.updatedAt).getTime())) > 3 * 86400000);
+
+  if (intent === "today") {
+    const candidates = sortByPriorityAndDate([...overdue, ...dueToday, ...high.filter(t => !dueToday.some(x => x.id === t.id))]);
+    if (!candidates.length) return "You have no active tasks due today or overdue. Good time to review the backlog and choose the next BI priority.";
+    return "Recommended work for today:\n\n" + candidates.slice(0, 5).map((t, i) =>
+      `${i + 1}. ${t.title} — ${t.priority || "medium"} — ${t.dueDate === today ? "Due today" : t.dueDate && t.dueDate < today ? "Overdue" : "Priority"}`
+    ).join("\n") + `\n\nRecommendation: start with ${candidates[0].title}.`;
   }
-  if (q.includes("blocked")) {
-    return blocked.length ? `Currently blocked: ${blocked.map(t => t.title).join(", ")}.` : "No tasks are currently marked as blocked.";
+
+  if (intent === "overdue") {
+    return overdue.length ? "Overdue tasks:\n\n" + sortByPriorityAndDate(overdue).map(t => `• ${t.title} — ${t.dueDate} — ${t.priority || "medium"}`).join("\n") : "No active tasks are overdue.";
   }
-  if (q.includes("stand-up") || q.includes("standup")) {
-    return `Stand-up draft:\n\nCompleted: Review your completed tasks in My Day.\n\nIn Progress: ${active.filter(t => t.status === "in_progress").map(t => t.title).join(", ") || "No tasks currently marked In Progress."}\n\nBlocked: ${blocked.map(t => t.title).join(", ") || "None."}\n\nToday: ${todayTasks.map(t => t.title).join(", ") || "Plan the next priority task."}`;
+
+  if (intent === "blocked") {
+    return blocked.length ? "Currently blocked:\n\n" + blocked.map(t => `• ${t.title}${t.dueDate ? ` — due ${t.dueDate}` : ""}`).join("\n") : "No tasks are currently marked as blocked.";
   }
-  if (q.includes("workload") || q.includes("summary")) {
-    return `BI workload snapshot: ${reports.length} reports tracked, ${active.length} active tasks, ${blocked.length} blocked, ${overdue.length} overdue, and ${deployed.length} reports deployed live.`;
+
+  if (intent === "priority") {
+    const list = sortByPriorityAndDate(high);
+    return list.length ? "High-priority active work:\n\n" + list.slice(0, 8).map(t => `• ${t.title} — ${t.priority}${t.dueDate ? ` — ${t.dueDate}` : ""}`).join("\n") : "There are no Critical or High priority active tasks.";
   }
-  return "I can help with your BI workload, tasks, reports, blockers, SQL/DAX planning, QA, and documentation. Ask me a specific question or use one of the quick prompts.";
+
+  if (intent === "taskCount") {
+    return `Task snapshot: ${tasks.length} total · ${active.length} active · ${completed.length} completed today · ${overdue.length} overdue · ${blocked.length} blocked.`;
+  }
+
+  if (intent === "workload") {
+    const byCategory = {};
+    active.forEach(t => { const c = t.category || "General"; byCategory[c] = (byCategory[c] || 0) + 1; });
+    const categoryText = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k}: ${v}`).join(" · ");
+    return `BI workload snapshot:\n\nReports: ${reports.length}\nActive tasks: ${active.length}\nIn progress: ${inProgress.length}\nBlocked: ${blocked.length}\nOverdue: ${overdue.length}\n\nTask mix: ${categoryText || "No active task categories yet."}`;
+  }
+
+  if (intent === "reports") {
+    if (!reports.length) return "No reports are currently available in the tracker.";
+    const counts = {};
+    reports.forEach(r => { counts[r.status || "unknown"] = (counts[r.status || "unknown"] || 0) + 1; });
+    return "Report tracker snapshot:\n\n" + Object.entries(counts).map(([status, count]) => `• ${status.replaceAll("_", " ")}: ${count}`).join("\n") +
+      `\n\nStale reports (>3 days, excluding live): ${staleReports.length}.`;
+  }
+
+  if (intent === "standup") {
+    return `Stand-up update:\n\nCompleted today\n${completed.map(t => `• ${t.title}`).join("\n") || "• No tasks marked completed today."}\n\nIn progress\n${inProgress.map(t => `• ${t.title}`).join("\n") || "• None."}\n\nToday\n${sortByPriorityAndDate(dueToday).slice(0, 5).map(t => `• ${t.title}`).join("\n") || "• No tasks due today."}\n\nBlocked\n${blocked.map(t => `• ${t.title}`).join("\n") || "• None."}`;
+  }
+
+  return "I can currently answer questions about your tasks, workload, overdue work, priorities, blockers, reports and stand-up status. I can also prepare task actions for your approval.";
+}
+
+function parseCreateTask(prompt) {
+  const q = prompt.trim();
+  const lower = q.toLowerCase();
+  const priority = /critical/.test(lower) ? "critical" : /high|urgent/.test(lower) ? "high" : /low/.test(lower) ? "low" : "medium";
+  const dueDate = /tomorrow/.test(lower) ? addDaysKey(1) : /today/.test(lower) ? dateKey() : "";
+  const category = /sql/.test(lower) ? "SQL" : /dax/.test(lower) ? "DAX" : /uat/.test(lower) ? "UAT" : /test|testing|qa/.test(lower) ? "Testing" : /meeting/.test(lower) ? "Meeting" : /document/.test(lower) ? "Documentation" : "General";
+  let title = q.replace(/create|add|new task|high|critical|medium|low|urgent|today|tomorrow|for me|please/gi, "").replace(/\s+/g, " ").trim();
+  title = title.replace(/^task\s*(to|for)?\s*/i, "").trim();
+  if (!title) title = "New BI task";
+  return { title: title.charAt(0).toUpperCase() + title.slice(1), category, priority, dueDate };
 }
 
 export default function AskMyBI({ C, S, reports = [], currentUser }) {
   const [tasks, setTasks] = useState([]);
   const [messages, setMessages] = useState([
-    { role: "assistant", text: `Hi ${currentUser || "Shreyas"} — I'm your BI Analyst Assistant. I can use your current report and task context to help you plan work, investigate issues, and prepare BI outputs.` }
+    { role: "assistant", text: `Hi ${currentUser || "Shreyas"} — Ask My BI is now running in Local Agent Mode. No external AI API is required.` }
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
 
   useEffect(() => onSnapshot(collection(db, "tasks"), s => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))), []);
 
-  const context = useMemo(() => ({
-    user: currentUser,
-    reports: reports.map(r => ({
-      id: r.id, name: r.name, clientName: r.clientName, module: r.module,
-      status: r.status, priority: r.priority, owner: r.owner,
-      remarks: (r.remarks || []).filter(x => !x.resolved).map(x => ({ text: x.text, category: x.category }))
-    })),
-    tasks: tasks.map(t => ({
-      id: t.id, title: t.title, category: t.category || "general",
-      status: t.status, priority: t.priority, dueDate: t.dueDate || "",
-      reportId: t.reportId || "", estimatedHours: t.estimatedHours || ""
-    }))
-  }), [currentUser, reports, tasks]);
+  const context = useMemo(() => ({ tasks, reports }), [tasks, reports]);
+
+  const executeAction = async () => {
+    if (!pendingAction) return;
+    setSending(true);
+    try {
+      if (pendingAction.type === "createTask") {
+        const t = pendingAction.data;
+        await addDoc(collection(db, "tasks"), {
+          title: t.title, owner: currentUser || "Shreyas Krishna", category: t.category,
+          priority: t.priority, status: "todo", dueDate: t.dueDate,
+          reportId: "", estimatedHours: "", actualHours: "",
+          createdDate: dateKey(), createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+        });
+        setMessages(m => [...m, { role: "assistant", text: `Task created: ${t.title} — ${t.priority} — ${t.dueDate || "No due date"}.` }]);
+      } else if (pendingAction.type === "updateTask") {
+        const updates = { updatedAt: serverTimestamp() };
+        if (pendingAction.priority) updates.priority = pendingAction.priority;
+        if (pendingAction.dueDate !== undefined) updates.dueDate = pendingAction.dueDate;
+        if (pendingAction.status) {
+          updates.status = pendingAction.status;
+          if (pendingAction.status === "done") updates.completedAt = serverTimestamp();
+        }
+        await updateDoc(doc(db, "tasks", pendingAction.task.id), updates);
+        setMessages(m => [...m, { role: "assistant", text: `Task updated: ${pendingAction.task.title}.` }]);
+      } else if (pendingAction.type === "deleteTask") {
+        await updateDoc(doc(db, "tasks", pendingAction.task.id), { status: "deleted", updatedAt: serverTimestamp() });
+        setMessages(m => [...m, { role: "assistant", text: `Task archived: ${pendingAction.task.title}.` }]);
+      } else if (pendingAction.type === "completeTask") {
+        await updateDoc(doc(db, "tasks", pendingAction.task.id), {
+          status: "done", completedAt: serverTimestamp(), updatedAt: serverTimestamp()
+        });
+        setMessages(m => [...m, { role: "assistant", text: `Task completed: ${pendingAction.task.title}.` }]);
+      }
+      setPendingAction(null);
+    } catch (error) {
+      setMessages(m => [...m, { role: "assistant", text: `I could not execute that action: ${error.message}` }]);
+    } finally {
+      setSending(false);
+    }
+  };
 
   const send = async (forcedText) => {
     const text = (forcedText ?? input).trim();
@@ -71,18 +247,44 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     setInput("");
     setMessages(m => [...m, { role: "user", text }]);
     setSending(true);
+
+    const intent = detectIntent(text);
+    let response = "";
     try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, context })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "AI request failed");
-      setMessages(m => [...m, { role: "assistant", text: data.content || "I could not generate a response." }]);
-    } catch (error) {
-      const fallback = buildFallback(text, reports, tasks);
-      setMessages(m => [...m, { role: "assistant", text: fallback + "\n\nAI backend note: " + (error.message || "API unavailable") }]);
+      if (intent === "createTask") {
+        const data = parseCreateTask(text);
+        setPendingAction({ type: "createTask", data });
+        response = `I prepared this action:\n\nCreate task: ${data.title}\nCategory: ${data.category}\nPriority: ${data.priority}\nDue: ${data.dueDate || "No due date"}`;
+      } else if (["updatePriority","updateDueDate","updateStatus","deleteTask"].includes(intent)) {
+        const task = findTaskMention(text, tasks);
+        if (!task) {
+          response = "I couldn't identify which task you mean. Include the exact task name.";
+        } else if (intent === "deleteTask") {
+          setPendingAction({ type: "deleteTask", task });
+          response = `I prepared this action:\n\nArchive task: ${task.title}`;
+        } else {
+          const action = { type: "updateTask", task };
+          if (intent === "updatePriority") action.priority = parsePriority(text);
+          if (intent === "updateDueDate") action.dueDate = parseDueDate(text);
+          if (intent === "updateStatus") action.status = parseStatus(text);
+          if (!action.priority && action.dueDate === undefined && !action.status) {
+            response = "Please specify the new priority, due date (today, tomorrow, or YYYY-MM-DD), or status.";
+          } else {
+            setPendingAction(action);
+            response = `I prepared this action for “${task.title}”.`;
+          }
+        }
+      } else if (intent === "completeTask") {
+        const task = findTaskMention(text, tasks);
+        if (!task) response = "I couldn't identify which task you want to complete. Include the task name.";
+        else {
+          setPendingAction({ type: "completeTask", task });
+          response = `I prepared this action:\n\nMark “${task.title}” as Done.`;
+        }
+      } else {
+        response = buildAnswer(intent, tasks, reports);
+      }
+      setMessages(m => [...m, { role: "assistant", text: response }]);
     } finally {
       setSending(false);
     }
@@ -92,11 +294,11 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     <div style={{ ...S.card, background: `linear-gradient(135deg,${C.accent} 0%,#0B5FFF 100%)`, border: "none", color: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, opacity: .72, textTransform: "uppercase", letterSpacing: ".08em" }}>Agentic BI Foundation</div>
+          <div style={{ fontSize: 10, fontWeight: 700, opacity: .72, textTransform: "uppercase", letterSpacing: ".08em" }}>Local Agent Engine</div>
           <h2 style={{ margin: "5px 0 3px", fontSize: 25 }}>Ask My BI</h2>
-          <div style={{ fontSize: 13, opacity: .82 }}>Your first AI layer for tasks, reports, blockers and analyst workflows.</div>
+          <div style={{ fontSize: 13, opacity: .82 }}>Your personal BI command center — powered by your own app data.</div>
         </div>
-        <div style={{ padding: "7px 10px", borderRadius: 20, background: "#ffffff18", border: "1px solid #ffffff35", fontSize: 11, fontWeight: 700 }}>BI ORCHESTRATOR · V1</div>
+        <div style={{ padding: "7px 10px", borderRadius: 20, background: "#ffffff18", border: "1px solid #ffffff35", fontSize: 11, fontWeight: 700 }}>LOCAL · API FREE</div>
       </div>
     </div>
 
@@ -104,11 +306,26 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       {QUICK_PROMPTS.map(p => <button key={p} onClick={() => send(p)} disabled={sending} style={{ ...S.btn(), fontSize: 11 }}>{p}</button>)}
     </div>
 
+    {pendingAction && <div style={{ ...S.card, border: `1px solid ${C.accent}`, background: C.accentBg }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.accent, textTransform: "uppercase" }}>Approval Required</div>
+      <div style={{ marginTop: 6, fontSize: 13, color: C.text, whiteSpace: "pre-wrap" }}>
+        {pendingAction.type === "createTask"
+          ? `Create “${pendingAction.data.title}” · ${pendingAction.data.category} · ${pendingAction.data.priority} · ${pendingAction.data.dueDate || "No due date"}`
+          : pendingAction.type === "deleteTask"
+            ? `Archive “${pendingAction.task.title}”`
+            : `Update “${pendingAction.task.title}”${pendingAction.priority ? ` · Priority: ${pendingAction.priority}` : ""}${pendingAction.dueDate !== undefined ? ` · Due: ${pendingAction.dueDate || "No due date"}` : ""}${pendingAction.status ? ` · Status: ${STATUS_LABELS[pendingAction.status] || pendingAction.status}` : ""}`}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={executeAction} disabled={sending} style={S.btn("primary")}>{sending ? "Executing..." : "Approve & Execute"}</button>
+        <button onClick={() => setPendingAction(null)} disabled={sending} style={S.btn()}>Cancel</button>
+      </div>
+    </div>}
+
     <div style={{ ...S.card, minHeight: 500, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: `1px solid ${C.border}` }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 14, color: C.text }}>BI Analyst Assistant</h3>
-          <p style={{ margin: "3px 0 0", fontSize: 11, color: C.textMuted }}>Context: {reports.length} reports · {tasks.length} tasks</p>
+          <h3 style={{ margin: 0, fontSize: 14, color: C.text }}>BI Local Agent</h3>
+          <p style={{ margin: "3px 0 0", fontSize: 11, color: C.textMuted }}>Live context: {reports.length} reports · {tasks.length} tasks</p>
         </div>
         <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>● READY</span>
       </div>
@@ -117,21 +334,21 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         {messages.map((m, i) => <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "82%", padding: "11px 13px", borderRadius: 11, background: m.role === "user" ? C.accent : C.bg, color: m.role === "user" ? "#fff" : C.text, border: m.role === "user" ? "none" : `1px solid ${C.border}`, fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
           {m.text}
         </div>)}
-        {sending && <div style={{ alignSelf: "flex-start", color: C.textMuted, fontSize: 12 }}>Thinking…</div>}
+        {sending && <div style={{ alignSelf: "flex-start", color: C.textMuted, fontSize: 12 }}>Processing…</div>}
       </div>
 
       <div style={{ display: "flex", gap: 8, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={sending} style={{ ...S.input, flex: 1 }} placeholder="Ask about your reports, tasks, blockers, SQL, DAX or today's priorities…" />
+        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={sending} style={{ ...S.input, flex: 1 }} placeholder="Ask about tasks, reports, blockers, workload or today's priorities…" />
         <button onClick={() => send()} disabled={sending || !input.trim()} style={S.btn("primary")}>{sending ? "..." : "Ask"}</button>
       </div>
     </div>
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 10 }}>
       {[
-        ["🧠 Orchestrator", "Understands your request and routes future work to specialist agents."],
-        ["🗄 SQL Agent", "Next: source investigation, joins, grain and data-quality checks."],
-        ["📊 Power BI Agent", "Next: DAX, model relationships, visuals and report logic."],
-        ["🧪 QA Agent", "Next: validation, anomaly checks and release readiness."]
+        ["🧠 Local Orchestrator", "Routes your question to a deterministic BI agent without an external AI service."],
+        ["📋 Task Agent", "Reads tasks, priorities and deadlines, and prepares approved task actions."],
+        ["📊 Report Agent", "Summarizes report statuses and identifies stale reports."],
+        ["🧪 QA Ready", "The next agent layer can add deterministic data-quality and release checks."]
       ].map(([title, desc]) => <div key={title} style={{ ...S.card, padding: 13 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{title}</div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>{desc}</div>
