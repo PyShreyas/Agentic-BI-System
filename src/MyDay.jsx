@@ -25,7 +25,13 @@ const badge = (item) => ({
 });
 
 function dateKey(d=new Date()) {
-  return new Date(d).toISOString().slice(0,10);
+  const value = d?.toDate ? d.toDate() : new Date(d);
+  if (Number.isNaN(value.getTime())) return "";
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0")
+  ].join("-");
 }
 function niceDate(value) {
   if (!value) return "—";
@@ -43,6 +49,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
   const [blocker,setBlocker]=useState("");
   const [dailyText,setDailyText]=useState("");
+  const [workView,setWorkView]=useState("today");
 
   const today=dateKey();
   useEffect(()=>onSnapshot(collection(db,"tasks"),s=>setTasks(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
@@ -60,7 +67,15 @@ export default function MyDay({ C, S, reports, currentUser }) {
     return { completed,blocked,overdue,high };
   },[tasks,today]);
 
-  const activeTasks=tasks.filter(t=>t.status!=="done" || t.dueDate===today);
+  const activeTasks=tasks.filter(t=>t.status!=="done");
+  const todayTasks=activeTasks.filter(t=>t.dueDate===today || dateKey(t.createdAt)===today);
+  const backlogTasks=activeTasks.filter(t=>!todayTasks.some(x=>x.id===t.id));
+  const displayedTasks=(workView==="today"?todayTasks:backlogTasks).slice().sort((a,b)=>{
+    const rank={critical:0,high:1,medium:2,low:3};
+    return (rank[a.priority]??2)-(rank[b.priority]??2) || String(a.dueDate||"9999").localeCompare(String(b.dueDate||"9999"));
+  });
+  const dailyTotal=todayTasks.length+metrics.completed;
+  const completionPct=dailyTotal ? Math.round((metrics.completed/dailyTotal)*100) : 0;
   const openBlockers=blockers.filter(b=>b.status!=="resolved");
   const staleReports=reports.filter(r=>{
     if(!r.updatedAt || r.status==="deployed_live") return false;
@@ -71,14 +86,17 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const createTask=async()=>{
     if(!task.title.trim()) return;
     await addDoc(collection(db,"tasks"),{
-      ...task,title:task.title.trim(),owner:currentUser,
+      ...task,title:task.title.trim(),owner:currentUser,actualHours:"",
       createdDate:new Date().toISOString(),createdAt:serverTimestamp(),updatedAt:serverTimestamp()
     });
     setTask({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
     setShowTask(false);
   };
   const updateTask=async(id,data)=>{
-    await updateDoc(doc(db,"tasks",id),{...data,updatedAt:serverTimestamp()});
+    const payload={...data,updatedAt:serverTimestamp()};
+    if(data.status==="in_progress" && !data.startedAt) payload.startedAt=new Date().toISOString();
+    if(data.status==="done" && !data.completedAt) payload.completedAt=new Date().toISOString();
+    await updateDoc(doc(db,"tasks",id),payload);
   };
   const removeTask=async(id)=>{
     if(window.confirm("Delete this task?")) await deleteDoc(doc(db,"tasks",id));
@@ -120,7 +138,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}}>
       {[
-        ["Today's Tasks",activeTasks.length,"ti-list-check",C.accent],
+        ["Today's Tasks",todayTasks.length,"ti-list-check",C.accent],
         ["Completed Today",metrics.completed,"ti-circle-check","#16A34A"],
         ["Blocked",metrics.blocked,"ti-alert-triangle","#DC2626"],
         ["Overdue",metrics.overdue,"ti-clock-exclamation","#EA580C"],
@@ -131,15 +149,32 @@ export default function MyDay({ C, S, reports, currentUser }) {
       </div>)}
     </div>
 
+    <div style={S.card}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+        <div>
+          <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase"}}>Daily Progress</div>
+          <div style={{fontSize:13,color:C.text,marginTop:3}}>{metrics.completed} of {dailyTotal} planned tasks completed</div>
+        </div>
+        <div style={{fontSize:20,fontWeight:750,color:C.accent}}>{completionPct}%</div>
+      </div>
+      <div style={{height:7,background:C.bg,borderRadius:6,marginTop:9,overflow:"hidden",border:"1px solid "+C.border}}>
+        <div style={{height:"100%",width:completionPct+"%",background:C.accent,borderRadius:6}} />
+      </div>
+    </div>
+
     <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(280px,1fr)",gap:16}}>
       <div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>Today's Work</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Tasks, deadlines and next actions</p></div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setWorkView("today")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="today"?C.accent:C.surface,color:workView==="today"?"#fff":C.text}}>Today {todayTasks.length}</button>
+            <button onClick={()=>setWorkView("backlog")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="backlog"?C.accent:C.surface,color:workView==="backlog"?"#fff":C.text}}>Backlog {backlogTasks.length}</button>
+          </div>
+          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>{workView==="today"?"Today's Work":"Task Backlog"}</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Tasks, deadlines and next actions</p></div>
           <button onClick={()=>setShowTask(true)} style={S.btn("primary")}><i className="ti ti-plus"/> Task</button>
         </div>
-        {activeTasks.length===0?<div style={{padding:28,textAlign:"center",color:C.textMuted,fontSize:13}}>No active tasks. Add your first task.</div>:
+        {displayedTasks.length===0?<div style={{padding:28,textAlign:"center",color:C.textMuted,fontSize:13}}>{workView==="today"?"No tasks planned for today.":"No backlog tasks."}</div>:
           <div style={{display:"flex",flexDirection:"column",gap:7}}>
-            {activeTasks.slice(0,12).map(t=>{
+            {displayedTasks.slice(0,12).map(t=>{
               const report=reports.find(r=>r.id===t.reportId);
               const st=TASK_STATUSES.find(x=>x.key===t.status)||TASK_STATUSES[0];
               const pr=PRIORITIES.find(x=>x.key===t.priority)||PRIORITIES[2];
