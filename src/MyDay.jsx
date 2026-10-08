@@ -96,6 +96,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:"",category:"development"});
   const [blocker,setBlocker]=useState("");
   const [dailyText,setDailyText]=useState("");
+  const [tomorrowText,setTomorrowText]=useState("");
   const [dailySaveState,setDailySaveState]=useState("");
   const [workView,setWorkView]=useState("today");
   const [showCarryover,setShowCarryover]=useState(false);
@@ -109,6 +110,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
   useEffect(()=>onSnapshot(collection(db,"blockers"),s=>setBlockers(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
 
   const todayUpdate=updates.find(x=>x.date===today);
+  const yesterdayUpdate=updates.find(x=>x.date===yesterday);
 
   useEffect(()=>{
     if(carryoverChecked || !tasks.length) return;
@@ -118,29 +120,42 @@ export default function MyDay({ C, S, reports, currentUser }) {
       return taskDate===yesterday;
     });
     setCarryoverTasks(pending);
+    const previousTomorrowText=yesterdayUpdate?.tomorrowText || "";
+    const previousTomorrowTasks=yesterdayUpdate?.tomorrowTasks || [];
     const key=`agenticBiCarryover:${today}`;
-    if(pending.length && !localStorage.getItem(key)) setShowCarryover(true);
+    if((pending.length || previousTomorrowText || previousTomorrowTasks.length) && !localStorage.getItem(key)) setShowCarryover(true);
     setCarryoverChecked(true);
-  },[tasks,carryoverChecked,today,yesterday]);
+  },[tasks,carryoverChecked,today,yesterday,yesterdayUpdate?.id]);
 
   const buildDailySnapshot=()=>{
+    const tomorrow=dateKey(new Date(Date.now()+86400000));
     const completedTasks=tasks.filter(t=>t.status==="done" && t.completedAt && dateKey(t.completedAt)===today);
     const pendingTasks=tasks.filter(t=>t.status!=="done" && (t.dueDate===today || dateKey(t.createdAt)===today));
+    const tomorrowTasks=tasks.filter(t=>t.status!=="done" && t.dueDate===tomorrow);
     const blockedTasks=tasks.filter(t=>t.status==="blocked");
     const completedLines=completedTasks.length ? completedTasks.map(t=>`• ${t.title}`).join("\\n") : "• None";
     const pendingLines=pendingTasks.length ? pendingTasks.map(t=>`• ${t.title}`).join("\\n") : "• None";
+    const tomorrowLines=tomorrowTasks.length ? tomorrowTasks.map(t=>`• ${t.title}`).join("\\n") : "• None";
     const blockedLines=blockedTasks.length ? blockedTasks.slice(0,8).map(t=>`• ${t.title}`).join("\\n") : "• None";
     return {
       completedTaskIds:completedTasks.map(t=>t.id),
       completedTasks:completedTasks.map(t=>t.title),
       pendingTaskIds:pendingTasks.map(t=>t.id),
       pendingTasks:pendingTasks.map(t=>t.title),
+      tomorrowTaskIds:tomorrowTasks.map(t=>t.id),
+      tomorrowTasks:tomorrowTasks.map(t=>t.title),
       blockedTaskIds:blockedTasks.map(t=>t.id),
       blockedTasks:blockedTasks.map(t=>t.title),
-      generatedText:`Completed:\\n${completedLines}\\n\\nPending / Next Focus:\\n${pendingLines}\\n\\nBlocked:\\n${blockedLines}`
+      generatedText:`Today:\\nCompleted:\\n${completedLines}\\n\\nPending / Next Focus:\\n${pendingLines}\\n\\nBlocked:\\n${blockedLines}`,
+      generatedTomorrowText:tomorrowLines
     };
   };
-  useEffect(()=>{ if(todayUpdate) setDailyText(todayUpdate.text||""); },[todayUpdate?.id,todayUpdate?.text]);
+  useEffect(()=>{
+    if(todayUpdate){
+      setDailyText(todayUpdate.text||"");
+      setTomorrowText(todayUpdate.tomorrowText||todayUpdate.generatedTomorrowText||"");
+    }
+  },[todayUpdate?.id,todayUpdate?.text,todayUpdate?.tomorrowText,todayUpdate?.generatedTomorrowText]);
 
   useEffect(()=>{
     if(!tasks.length) return;
@@ -207,9 +222,11 @@ export default function MyDay({ C, S, reports, currentUser }) {
     try {
       const snapshot=buildDailySnapshot();
       const text=dailyText.trim() || snapshot.generatedText;
+      const nextDayText=tomorrowText.trim() || snapshot.generatedTomorrowText;
       const payload={
         ...snapshot,
         text,
+        tomorrowText:nextDayText,
         updatedAt:serverTimestamp(),
         updatedBy:currentUser || "Shreyas Krishna"
       };
@@ -223,6 +240,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
         });
       }
       setDailyText(text);
+      setTomorrowText(nextDayText);
       setDailySaveState("Saved ✓");
       setTimeout(()=>setDailySaveState(""),2500);
     } catch(error) {
@@ -333,8 +351,17 @@ export default function MyDay({ C, S, reports, currentUser }) {
             <button onClick={saveDaily} disabled={dailySaveState==="Saving..."} style={{...S.btn("primary"),opacity:dailySaveState==="Saving..."?.65:1}}>{dailySaveState==="Saving..."?"Saving...":"Save Update"}</button>
           </div>
         </div>
-        <textarea style={{...S.input,minHeight:145,resize:"vertical"}} value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={"Completed:\n• ...\n\nIn Progress:\n• ...\n\nBlockers:\n• ...\n\nTomorrow:\n• ..."}/>
-        {todayUpdate&&<div style={{fontSize:10,color:C.textMuted,marginTop:6}}>Last saved by {todayUpdate.updatedBy||currentUser}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div>
+            <label style={S.label}>Today — Completed / Pending / Blockers</label>
+            <textarea style={{...S.input,minHeight:150,resize:"vertical"}} value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={"Completed:\n• ...\n\nPending / Next Focus:\n• ...\n\nBlockers:\n• ..."}/>
+          </div>
+          <div>
+            <label style={S.label}>Tomorrow — Next Day Plan</label>
+            <textarea style={{...S.input,minHeight:150,resize:"vertical"}} value={tomorrowText} onChange={e=>setTomorrowText(e.target.value)} placeholder={"Tasks / updates for tomorrow:\n• ...\n• ..."} />
+          </div>
+        </div>
+        {todayUpdate&&<div style={{fontSize:10,color:C.textMuted,marginTop:6}}>Today's update and tomorrow's plan are stored separately. Last saved by {todayUpdate.updatedBy||currentUser}</div>}
       </div>
 
       <div style={S.card}>
@@ -352,10 +379,23 @@ export default function MyDay({ C, S, reports, currentUser }) {
           <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:16}}>
             <div style={{width:42,height:42,borderRadius:11,background:"#FFF7ED",color:"#EA580C",display:"flex",alignItems:"center",justifyContent:"center",fontSize:21}}>↻</div>
             <div>
-              <h2 style={{margin:0,fontSize:18,color:C.text}}>Pending from yesterday</h2>
-              <p style={{margin:"4px 0 0",fontSize:12,color:C.textMuted}}>You have {carryoverTasks.length} unfinished task{carryoverTasks.length===1?"":"s"} carried over from {niceDate(yesterday)}.</p>
+              <h2 style={{margin:0,fontSize:18,color:C.text}}>Your plan for today</h2>
+              <p style={{margin:"4px 0 0",fontSize:12,color:C.textMuted}}>Here are unfinished items from yesterday and the plan you saved for today.</p>
             </div>
           </div>
+          {yesterdayUpdate?.tomorrowText && (
+            <div style={{padding:"11px 12px",borderRadius:9,background:"#EEF6FF",border:"1px solid #CFE1FF",marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",marginBottom:5}}>Tomorrow Plan from {niceDate(yesterday)}</div>
+              <div style={{fontSize:12,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.5}}>{yesterdayUpdate.tomorrowText}</div>
+            </div>
+          )}
+          {yesterdayUpdate?.tomorrowTasks?.length>0 && (
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",marginBottom:6}}>Planned Tasks</div>
+              {yesterdayUpdate.tomorrowTasks.map((title,i)=><div key={i} style={{padding:"7px 9px",borderRadius:7,background:C.bg,border:`1px solid ${C.border}`,fontSize:12,color:C.text,marginBottom:5}}>• {title}</div>)}
+            </div>
+          )}
+          {carryoverTasks.length>0 && <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",marginBottom:6}}>Unfinished from Yesterday</div>}
           <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:300,overflowY:"auto"}}>
             {carryoverTasks.map(t=>{
               const pr=PRIORITIES.find(p=>p.key===t.priority)||PRIORITIES[2];
