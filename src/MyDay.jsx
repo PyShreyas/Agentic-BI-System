@@ -96,6 +96,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:"",category:"development"});
   const [blocker,setBlocker]=useState("");
   const [dailyText,setDailyText]=useState("");
+  const [dailySaveState,setDailySaveState]=useState("");
   const [workView,setWorkView]=useState("today");
   const [showCarryover,setShowCarryover]=useState(false);
   const [carryoverTasks,setCarryoverTasks]=useState([]);
@@ -202,11 +203,33 @@ export default function MyDay({ C, S, reports, currentUser }) {
     if(window.confirm("Delete this task?")) await deleteDoc(doc(db,"tasks",id));
   };
   const saveDaily=async()=>{
-    const snapshot=buildDailySnapshot();
-    const text=dailyText.trim() || snapshot.generatedText;
-    const payload={...snapshot,text,updatedAt:serverTimestamp(),updatedBy:currentUser};
-    if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),payload);
-    else await addDoc(collection(db,"dailyUpdates"),{date:today,createdAt:serverTimestamp(),...payload});
+    setDailySaveState("Saving...");
+    try {
+      const snapshot=buildDailySnapshot();
+      const text=dailyText.trim() || snapshot.generatedText;
+      const payload={
+        ...snapshot,
+        text,
+        updatedAt:serverTimestamp(),
+        updatedBy:currentUser || "Shreyas Krishna"
+      };
+      if(todayUpdate) {
+        await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),payload);
+      } else {
+        await addDoc(collection(db,"dailyUpdates"),{
+          date:today,
+          createdAt:serverTimestamp(),
+          ...payload
+        });
+      }
+      setDailyText(text);
+      setDailySaveState("Saved ✓");
+      setTimeout(()=>setDailySaveState(""),2500);
+    } catch(error) {
+      console.error("Failed to save daily update:",error);
+      setDailySaveState("Save failed");
+      alert(`Unable to save the daily update. ${error?.message || "Please try again."}`);
+    }
   };
   const createBlocker=async()=>{
     if(!blocker.trim()) return;
@@ -303,7 +326,13 @@ export default function MyDay({ C, S, reports, currentUser }) {
 
     <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,1fr)",gap:16}}>
       <div style={S.card}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div><h3 style={{margin:0,fontSize:14,color:C.text}}>Daily Update</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Capture completed work, blockers and tomorrow's plan.</p></div><button onClick={saveDaily} style={S.btn("primary")}>Save Update</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>Daily Update</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Capture completed work, blockers and tomorrow's plan.</p></div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {dailySaveState&&<span style={{fontSize:10,color:dailySaveState==="Save failed"?"#DC2626":"#16A34A",fontWeight:700}}>{dailySaveState}</span>}
+            <button onClick={saveDaily} disabled={dailySaveState==="Saving..."} style={{...S.btn("primary"),opacity:dailySaveState==="Saving..."?.65:1}}>{dailySaveState==="Saving..."?"Saving...":"Save Update"}</button>
+          </div>
+        </div>
         <textarea style={{...S.input,minHeight:145,resize:"vertical"}} value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={"Completed:\n• ...\n\nIn Progress:\n• ...\n\nBlockers:\n• ...\n\nTomorrow:\n• ..."}/>
         {todayUpdate&&<div style={{fontSize:10,color:C.textMuted,marginTop:6}}>Last saved by {todayUpdate.updatedBy||currentUser}</div>}
       </div>
