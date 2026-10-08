@@ -354,54 +354,69 @@ function parseStatus(prompt) {
   return "";
 }
 
-function routeAgents(prompt) {
-  const q = prompt.toLowerCase();
-  const routes = [];
-
-  const add = (agent, intent) => {
-    if (!routes.some(r => r.intent === intent)) routes.push({ agent, intent });
-  };
-
-  if (/morning briefing|morning brief|start my day|daily briefing|plan my day|prioritize my day|what should i do next|next task|next thing|what should i work on today/.test(q)) {
-    add("My Day Agent", "myDay");
-  }
-  if (/overdue|past due|late/.test(q)) add("Task Agent", "overdue");
-  if (/blocked|blocker/.test(q)) add("Task Agent", "blocked");
-  if (/workload|how am i doing|how much work/.test(q)) add("Task Agent", "workload");
-  if (/report|client|module|stale|attention|uat/.test(q)) {
-    if (/stale|outdated|old reports?/.test(q)) add("Report Agent", "staleReports");
-    if (/need attention|needs attention|at risk|attention needed/.test(q)) add("Report Agent", "reportAttention");
-    if (/report.*(for|from|of|in)|reports? (for|from|of|in)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) add("Report Agent", "reportSearch");
-  }
-  if (/qa|quality|pre[- ]?uat|before uat|pre[- ]?release|release checklist|what.*fix|missing.*report/.test(q)) {
-    add("QA Agent", "qa");
-  }
-  if (/write.*stand[- ]?up|draft.*stand[- ]?up/.test(q)) add("Documentation Agent", "docStandup");
-  if (/developer notes?|dev notes?|technical notes?/.test(q)) add("Documentation Agent", "developerNotes");
-  if (/uat update|uat status|client update/.test(q)) add("Documentation Agent", "uatUpdate");
-  if (/work summary|summarize.*work|change summary|work.*summary/.test(q)) add("Documentation Agent", "workSummary");
-
-  return routes;
+function normalizePrompt(prompt) {
+  return prompt.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
 }
 
-function buildOrchestratedAnswer(routes, tasks, reports, prompt) {
+function extractEntities(prompt, reports, tasks) {
+  const q = normalizePrompt(prompt);
+  const reportMatches = findReportMatches(q, reports);
+  const taskMatches = findTaskMatches(q, tasks);
+  const clients = [...new Set(reports.flatMap(r => [r.clientName, r.client, r.clientId]).filter(Boolean))].sort((a, b) => String(b).length - String(a).length);
+  const modules = [...new Set(reports.map(r => r.module).filter(Boolean))].sort((a, b) => String(b).length - String(a).length);
+  const client = clients.find(x => q.includes(String(x).toLowerCase())) || null;
+  const module = modules.find(x => q.includes(String(x).toLowerCase())) || null;
+  return { client, module, report: reportMatches[0] || null, task: taskMatches[0] || null };
+}
+
+function routeAgents(prompt, reports = [], tasks = []) {
+  const q = normalizePrompt(prompt);
+  const routes = [];
+  const add = (agent, intent, confidence, reason) => {
+    if (!routes.some(r => r.intent === intent)) routes.push({ agent, intent, confidence, reason });
+  };
+  const has = (...patterns) => patterns.some(pattern => pattern.test(q));
+  const asksForAction = has(/create|add|new task|complete|mark .*done|finish .*task|delete|remove|archive|change|set .*priority|move .*deadline|change .*status/);
+  const asksForPlanning = has(/what should i|what do i|next|prioritize|focus|plan my day|morning|today/);
+  const asksForStatus = has(/status|where .*at|how .*going|progress|update/);
+  const asksForProblems = has(/problem|issue|fix|missing|risk|blocked|overdue|late|stale|attention/);
+
+  if (has(/morning briefing|morning brief|start my day|daily briefing|plan my day|prioritize my day|what should i do next|next task|next thing|what should i work on today/)) add("My Day Agent", "myDay", 0.98, "planning language");
+  else if (asksForPlanning && !asksForAction) add("My Day Agent", "myDay", 0.76, "general planning language");
+  if (has(/overdue|past due|late|deadline/)) add("Task Agent", "overdue", 0.96, "task timing language");
+  if (has(/blocked|blocker/)) add("Task Agent", "blocked", 0.97, "blocker language");
+  if (has(/workload|how am i doing|how much work|task count|how many tasks/)) add("Task Agent", "workload", 0.93, "workload language");
+  if (has(/stale|outdated|old reports?/)) add("Report Agent", "staleReports", 0.96, "report freshness language");
+  if (has(/need attention|needs attention|at risk|attention needed|focus on.*report/)) add("Report Agent", "reportAttention", 0.95, "report risk language");
+
+  const entity = extractEntities(q, reports, tasks);
+  if (entity.report || entity.client || entity.module || has(/show .*reports?|find .*reports?|search .*reports?|which reports?|report status|reports? in/)) add("Report Agent", "reportSearch", entity.report || entity.client || entity.module ? 0.97 : 0.82, "report/entity language");
+  if (has(/qa|quality|pre[- ]?uat|before uat|pre[- ]?release|release checklist|what.*fix|missing.*report|validate|check.*ready/)) add("QA Agent", "qa", 0.97, "quality/release language");
+  if (has(/write.*stand[- ]?up|draft.*stand[- ]?up|daily update/)) add("Documentation Agent", "docStandup", 0.97, "stand-up documentation request");
+  if (has(/developer notes?|dev notes?|technical notes?|document.*change/)) add("Documentation Agent", "developerNotes", 0.97, "developer documentation request");
+  if (has(/uat update|uat status|client update|send.*uat/)) add("Documentation Agent", "uatUpdate", 0.97, "UAT documentation request");
+  if (has(/work summary|summarize.*work|change summary|work.*summary|summarize.*report/)) add("Documentation Agent", "workSummary", 0.95, "summary/documentation request");
+  if (asksForProblems && (entity.report || entity.client || entity.module) && !routes.some(r => r.intent === "qa")) add("QA Agent", "qa", 0.78, "problem/risk language tied to a BI entity");
+  if (asksForStatus && (entity.report || entity.client || entity.module) && !routes.some(r => r.intent === "reportSearch")) add("Report Agent", "reportSearch", 0.84, "status language tied to a BI entity");
+  return { routes: routes.sort((a, b) => b.confidence - a.confidence), entity };
+}
+
+function buildOrchestratedAnswer(orchestration, tasks, reports, prompt) {
+  const { routes, entity } = orchestration;
   if (!routes.length) return null;
-
-  const sections = routes.map(route => {
+  const sections = routes.slice(0, 5).map(route => {
     const answer = buildAnswer(route.intent, tasks, reports, prompt);
-    return `[${route.agent}]\n${answer}`;
+    return `[${route.agent} · ${Math.round(route.confidence * 100)}%]\n${answer}`;
   });
-
   const nextActions = [];
   if (routes.some(r => r.intent === "qa")) nextActions.push("Resolve QA findings before UAT/release.");
   if (routes.some(r => ["overdue", "blocked"].includes(r.intent))) nextActions.push("Address overdue or blocked tasks first.");
   if (routes.some(r => ["reportAttention", "staleReports"].includes(r.intent))) nextActions.push("Review report items flagged for attention.");
   if (routes.some(r => r.intent === "myDay")) nextActions.push("Start with the highest-priority actionable item.");
-  if (routes.some(r => r.intent === "developerNotes" || r.intent === "uatUpdate" || r.intent === "docStandup" || r.intent === "workSummary")) nextActions.push("Copy the generated documentation into the relevant update, ticket or report notes.");
-
-  return `BI ORCHESTRATOR\n\nRouted to: ${routes.map(r => r.agent).join(" + ")}\n\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the agent findings and choose the next action."}`;
+  if (routes.some(r => ["developerNotes", "uatUpdate", "docStandup", "workSummary"].includes(r.intent))) nextActions.push("Copy the generated documentation into the relevant update, ticket or report notes.");
+  const entityLine = [entity.client ? `Client: ${entity.client}` : "", entity.module ? `Module: ${entity.module}` : "", entity.report?.name ? `Report: ${entity.report.name}` : "", entity.task?.title ? `Task: ${entity.task.title}` : ""].filter(Boolean).join(" · ");
+  return `BI ORCHESTRATOR\n\nRouted to: ${routes.slice(0, 5).map(r => r.agent).join(" + ")}${entityLine ? `\nContext: ${entityLine}` : ""}\n\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the findings and choose the next action."}`;
 }
-
 function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   const today = dateKey();
   const tomorrow = addDaysKey(1);
@@ -585,14 +600,15 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     setSending(true);
 
     const intent = detectIntent(text);
-    const agentRoutes = routeAgents(text);
+    const orchestration = routeAgents(text, reports, tasks);
+    const agentRoutes = orchestration.routes;
     let response = "";
     try {
       const isInformationalOrchestrated = agentRoutes.length >= 2 &&
         !["createTask", "completeTask", "deleteTask", "updatePriority", "updateDueDate", "updateStatus"].includes(intent);
 
       if (isInformationalOrchestrated) {
-        response = buildOrchestratedAnswer(agentRoutes, tasks, reports, text);
+        response = buildOrchestratedAnswer(orchestration, tasks, reports, text);
       } else {
       if (intent === "createTask") {
         const data = parseCreateTask(text);
