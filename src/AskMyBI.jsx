@@ -299,21 +299,12 @@ function detectIntent(prompt) {
   if (/workload|summary|how am i doing|how much work/.test(q)) return "workload";
   if (/morning briefing|morning brief|start my day|daily briefing|plan my day|prioritize my day|help me prioritize|what should i do next|next task|next thing/.test(q)) return "myDay";
   if (/what should i (work|do)|what do i work on|today('s)? (work|tasks)|tasks? today/.test(q)) return "today";
-  if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
-  if (/delete|remove|archive.*task/.test(q)) return "deleteTask";
-  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
-  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
-  if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
   if (/high priority|critical|urgent/.test(q)) return "priority";
   if (/how many tasks|task count|number of tasks/.test(q)) return "taskCount";
   if (/stale|outdated|old reports?/.test(q)) return "staleReports";
   if (/need attention|needs attention|at risk|attention needed|which reports? should i focus/.test(q)) return "reportAttention";
   if (/report.*(for|from|of|in)|reports? (for|from|of|in)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) return "reportSearch";
   if (/reports? (in|at)|report status|reports? status|which reports?/.test(q)) return "reports";
-  if (/delete|remove.*task/.test(q)) return "deleteTask";
-  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
-  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
-  if (/in progress|start.*task|working on/.test(q)) return "updateStatus";
   return "help";
 }
 
@@ -361,6 +352,54 @@ function parseStatus(prompt) {
   if (/to do|todo|backlog/.test(q)) return "todo";
   if (/done|complete|completed/.test(q)) return "done";
   return "";
+}
+
+function routeAgents(prompt) {
+  const q = prompt.toLowerCase();
+  const routes = [];
+
+  const add = (agent, intent) => {
+    if (!routes.some(r => r.intent === intent)) routes.push({ agent, intent });
+  };
+
+  if (/morning briefing|morning brief|start my day|daily briefing|plan my day|prioritize my day|what should i do next|next task|next thing|what should i work on today/.test(q)) {
+    add("My Day Agent", "myDay");
+  }
+  if (/overdue|past due|late/.test(q)) add("Task Agent", "overdue");
+  if (/blocked|blocker/.test(q)) add("Task Agent", "blocked");
+  if (/workload|how am i doing|how much work/.test(q)) add("Task Agent", "workload");
+  if (/report|client|module|stale|attention|uat/.test(q)) {
+    if (/stale|outdated|old reports?/.test(q)) add("Report Agent", "staleReports");
+    if (/need attention|needs attention|at risk|attention needed/.test(q)) add("Report Agent", "reportAttention");
+    if (/report.*(for|from|of|in)|reports? (for|from|of|in)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) add("Report Agent", "reportSearch");
+  }
+  if (/qa|quality|pre[- ]?uat|before uat|pre[- ]?release|release checklist|what.*fix|missing.*report/.test(q)) {
+    add("QA Agent", "qa");
+  }
+  if (/write.*stand[- ]?up|draft.*stand[- ]?up/.test(q)) add("Documentation Agent", "docStandup");
+  if (/developer notes?|dev notes?|technical notes?/.test(q)) add("Documentation Agent", "developerNotes");
+  if (/uat update|uat status|client update/.test(q)) add("Documentation Agent", "uatUpdate");
+  if (/work summary|summarize.*work|change summary|work.*summary/.test(q)) add("Documentation Agent", "workSummary");
+
+  return routes;
+}
+
+function buildOrchestratedAnswer(routes, tasks, reports, prompt) {
+  if (!routes.length) return null;
+
+  const sections = routes.map(route => {
+    const answer = buildAnswer(route.intent, tasks, reports, prompt);
+    return `[${route.agent}]\n${answer}`;
+  });
+
+  const nextActions = [];
+  if (routes.some(r => r.intent === "qa")) nextActions.push("Resolve QA findings before UAT/release.");
+  if (routes.some(r => ["overdue", "blocked"].includes(r.intent))) nextActions.push("Address overdue or blocked tasks first.");
+  if (routes.some(r => ["reportAttention", "staleReports"].includes(r.intent))) nextActions.push("Review report items flagged for attention.");
+  if (routes.some(r => r.intent === "myDay")) nextActions.push("Start with the highest-priority actionable item.");
+  if (routes.some(r => r.intent === "developerNotes" || r.intent === "uatUpdate" || r.intent === "docStandup" || r.intent === "workSummary")) nextActions.push("Copy the generated documentation into the relevant update, ticket or report notes.");
+
+  return `BI ORCHESTRATOR\n\nRouted to: ${routes.map(r => r.agent).join(" + ")}\n\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the agent findings and choose the next action."}`;
 }
 
 function buildAnswer(intent, tasks, reports, promptForAgent = "") {
@@ -546,8 +585,15 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     setSending(true);
 
     const intent = detectIntent(text);
+    const agentRoutes = routeAgents(text);
     let response = "";
     try {
+      const isInformationalOrchestrated = agentRoutes.length >= 2 &&
+        !["createTask", "completeTask", "deleteTask", "updatePriority", "updateDueDate", "updateStatus"].includes(intent);
+
+      if (isInformationalOrchestrated) {
+        response = buildOrchestratedAnswer(agentRoutes, tasks, reports, text);
+      } else {
       if (intent === "createTask") {
         const data = parseCreateTask(text);
         setPendingAction({ type: "createTask", data });
@@ -584,6 +630,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         }
       } else {
         response = buildAnswer(intent, tasks, reports, text);
+      }
       }
       setMessages(m => [...m, { role: "assistant", text: response }]);
     } finally {
