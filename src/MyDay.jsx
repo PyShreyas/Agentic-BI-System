@@ -18,11 +18,29 @@ const PRIORITIES = [
   { key:"low", label:"Low", color:"#16A34A", bg:"#F0FDF4" },
 ];
 
+const TASK_CATEGORIES = [
+  { key:"development", label:"Development" },
+  { key:"dax", label:"DAX" },
+  { key:"sql", label:"SQL" },
+  { key:"testing", label:"Testing" },
+  { key:"uat", label:"UAT" },
+  { key:"documentation", label:"Documentation" },
+  { key:"meeting", label:"Meeting" },
+  { key:"support", label:"Support" },
+  { key:"learning", label:"Learning" },
+];
+
 const badge = (item) => ({
   display:"inline-block", padding:"3px 9px", borderRadius:20,
   background:item.bg, color:item.color, fontSize:11, fontWeight:700,
   border:`1px solid ${item.color}33`, whiteSpace:"nowrap"
 });
+
+const categoryBadge = {
+  display:"inline-block", padding:"3px 8px", borderRadius:20,
+  background:"#EEF6FF", color:"#0B5FFF", fontSize:10, fontWeight:700,
+  border:"1px solid #CFE1FF", whiteSpace:"nowrap"
+};
 
 function dateKey(d=new Date()) {
   const value = d?.toDate ? d.toDate() : new Date(d);
@@ -39,6 +57,34 @@ function niceDate(value) {
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 }
+function localDateOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return dateKey(d);
+}
+function parseQuickCapture(value, currentTask) {
+  const raw = value.trim();
+  if (!raw) return currentTask;
+  let title = raw;
+  let priority = currentTask.priority;
+  let dueDate = currentTask.dueDate;
+
+  const priorityMatch = title.match(/(?:^|\s)(critical|high|medium|low)(?:\s|$)/i);
+  if (priorityMatch) {
+    priority = priorityMatch[1].toLowerCase();
+    title = title.replace(priorityMatch[0], " ").replace(/\s+/g, " ").trim();
+  }
+
+  if (/\btomorrow\b/i.test(title)) {
+    dueDate = localDateOffset(1);
+    title = title.replace(/\btomorrow\b/ig, " ").replace(/\s+/g, " ").trim();
+  } else if (/\btoday\b/i.test(title)) {
+    dueDate = localDateOffset(0);
+    title = title.replace(/\btoday\b/ig, " ").replace(/\s+/g, " ").trim();
+  }
+
+  return {...currentTask, title, priority, dueDate};
+}
 
 export default function MyDay({ C, S, reports, currentUser }) {
   const [tasks,setTasks]=useState([]);
@@ -46,7 +92,8 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const [blockers,setBlockers]=useState([]);
   const [showTask,setShowTask]=useState(false);
   const [showBlocker,setShowBlocker]=useState(false);
-  const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
+  const [quickCapture,setQuickCapture]=useState("");
+  const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:"",category:"development"});
   const [blocker,setBlocker]=useState("");
   const [dailyText,setDailyText]=useState("");
   const [workView,setWorkView]=useState("today");
@@ -83,14 +130,21 @@ export default function MyDay({ C, S, reports, currentUser }) {
     return Date.now()-d.getTime()>3*86400000;
   });
 
+  const resetTask=()=>setTask({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:"",category:"development"});
+  const closeTaskModal=()=>{ setShowTask(false); setQuickCapture(""); resetTask(); };
+  const applyQuickCapture=()=>{
+    setTask(current=>parseQuickCapture(quickCapture,current));
+  };
+  const setDueDate=(value)=>setTask(current=>({...current,dueDate:value}));
+
   const createTask=async()=>{
     if(!task.title.trim()) return;
     await addDoc(collection(db,"tasks"),{
       ...task,title:task.title.trim(),owner:currentUser,actualHours:"",
+      category:task.category||"development",
       createdDate:new Date().toISOString(),createdAt:serverTimestamp(),updatedAt:serverTimestamp()
     });
-    setTask({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
-    setShowTask(false);
+    closeTaskModal();
   };
   const updateTask=async(id,data)=>{
     const payload={...data,updatedAt:serverTimestamp()};
@@ -151,24 +205,16 @@ export default function MyDay({ C, S, reports, currentUser }) {
 
     <div style={S.card}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-        <div>
-          <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase"}}>Daily Progress</div>
-          <div style={{fontSize:13,color:C.text,marginTop:3}}>{metrics.completed} of {dailyTotal} planned tasks completed</div>
-        </div>
+        <div><div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase"}}>Daily Progress</div><div style={{fontSize:13,color:C.text,marginTop:3}}>{metrics.completed} of {dailyTotal} planned tasks completed</div></div>
         <div style={{fontSize:20,fontWeight:750,color:C.accent}}>{completionPct}%</div>
       </div>
-      <div style={{height:7,background:C.bg,borderRadius:6,marginTop:9,overflow:"hidden",border:"1px solid "+C.border}}>
-        <div style={{height:"100%",width:completionPct+"%",background:C.accent,borderRadius:6}} />
-      </div>
+      <div style={{height:7,background:C.bg,borderRadius:6,marginTop:9,overflow:"hidden",border:"1px solid "+C.border}}><div style={{height:"100%",width:completionPct+"%",background:C.accent,borderRadius:6}} /></div>
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(280px,1fr)",gap:16}}>
       <div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setWorkView("today")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="today"?C.accent:C.surface,color:workView==="today"?"#fff":C.text}}>Today {todayTasks.length}</button>
-            <button onClick={()=>setWorkView("backlog")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="backlog"?C.accent:C.surface,color:workView==="backlog"?"#fff":C.text}}>Backlog {backlogTasks.length}</button>
-          </div>
+          <div style={{display:"flex",gap:6}}><button onClick={()=>setWorkView("today")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="today"?C.accent:C.surface,color:workView==="today"?"#fff":C.text}}>Today {todayTasks.length}</button><button onClick={()=>setWorkView("backlog")} style={{...S.btn(),padding:"5px 9px",fontSize:10,background:workView==="backlog"?C.accent:C.surface,color:workView==="backlog"?"#fff":C.text}}>Backlog {backlogTasks.length}</button></div>
           <div><h3 style={{margin:0,fontSize:14,color:C.text}}>{workView==="today"?"Today's Work":"Task Backlog"}</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Tasks, deadlines and next actions</p></div>
           <button onClick={()=>setShowTask(true)} style={S.btn("primary")}><i className="ti ti-plus"/> Task</button>
         </div>
@@ -178,10 +224,11 @@ export default function MyDay({ C, S, reports, currentUser }) {
               const report=reports.find(r=>r.id===t.reportId);
               const st=TASK_STATUSES.find(x=>x.key===t.status)||TASK_STATUSES[0];
               const pr=PRIORITIES.find(x=>x.key===t.priority)||PRIORITIES[2];
+              const cat=TASK_CATEGORIES.find(x=>x.key===t.category);
               return <div key={t.id} style={{padding:"10px 11px",border:`1px solid ${C.border}`,borderRadius:9,background:C.bg}}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
                   <div style={{minWidth:0,flex:1}}>
-                    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:650,color:C.text}}>{t.title}</span><span style={badge(st)}>{st.label}</span><span style={badge(pr)}>{pr.label}</span></div>
+                    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:650,color:C.text}}>{t.title}</span><span style={categoryBadge}>{cat?.label||"General"}</span><span style={badge(st)}>{st.label}</span><span style={badge(pr)}>{pr.label}</span></div>
                     <div style={{fontSize:11,color:C.textMuted,marginTop:5}}>{report?.name||"Unlinked task"}{t.dueDate?` · Due ${niceDate(t.dueDate)}`:""}{t.estimatedHours?` · ${t.estimatedHours}h est.`:""}</div>
                   </div>
                   <select value={t.status||"todo"} onChange={e=>updateTask(t.id,{status:e.target.value,...(e.target.value==="done"?{completedAt:new Date().toISOString()}:{})})} style={{...S.input,width:"auto",padding:"5px 8px",fontSize:11}}>
@@ -208,10 +255,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
 
     <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,1fr)",gap:16}}>
       <div style={S.card}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>Daily Update</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Capture completed work, blockers and tomorrow's plan.</p></div>
-          <button onClick={saveDaily} style={S.btn("primary")}>Save Update</button>
-        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div><h3 style={{margin:0,fontSize:14,color:C.text}}>Daily Update</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Capture completed work, blockers and tomorrow's plan.</p></div><button onClick={saveDaily} style={S.btn("primary")}>Save Update</button></div>
         <textarea style={{...S.input,minHeight:145,resize:"vertical"}} value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={"Completed:\n• ...\n\nIn Progress:\n• ...\n\nBlockers:\n• ...\n\nTomorrow:\n• ..."}/>
         {todayUpdate&&<div style={{fontSize:10,color:C.textMuted,marginTop:6}}>Last saved by {todayUpdate.updatedBy||currentUser}</div>}
       </div>
@@ -225,16 +269,34 @@ export default function MyDay({ C, S, reports, currentUser }) {
       </div>
     </div>
 
-    {showTask&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&setShowTask(false)}><div style={S.modalContent}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h2 style={{margin:0,fontSize:17,color:C.text}}>New Daily Task</h2><button onClick={()=>setShowTask(false)} style={{background:"transparent",border:0,fontSize:22,cursor:"pointer",color:C.textMuted}}>×</button></div>
-      <label style={S.label}>Task *</label><input autoFocus style={S.input} value={task.title} onChange={e=>setTask({...task,title:e.target.value})} placeholder="e.g. Validate PO Sent Date logic"/>
+    {showTask&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&closeTaskModal()}><div style={S.modalContent}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><div><h2 style={{margin:0,fontSize:17,color:C.text}}>New Daily Task</h2><div style={{fontSize:11,color:C.textMuted,marginTop:3}}>Capture the task quickly, then review before saving.</div></div><button onClick={closeTaskModal} style={{background:"transparent",border:0,fontSize:22,cursor:"pointer",color:C.textMuted}}>×</button></div>
+
+      <label style={S.label}>Quick Capture</label>
+      <div style={{display:"flex",gap:8}}>
+        <input autoFocus style={{...S.input,flex:1}} value={quickCapture} onChange={e=>setQuickCapture(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();applyQuickCapture();}}} placeholder="e.g. Validate PO Sent Date - High - Today"/>
+        <button onClick={applyQuickCapture} style={S.btn("primary")}>Parse</button>
+      </div>
+      <div style={{fontSize:10,color:C.textMuted,marginTop:5}}>Recognizes <b>Critical / High / Medium / Low</b> and <b>Today / Tomorrow</b>.</div>
+
+      <div style={{marginTop:14}}><label style={S.label}>Task *</label><input style={S.input} value={task.title} onChange={e=>setTask({...task,title:e.target.value})} placeholder="e.g. Validate PO Sent Date logic"/></div>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12}}>
+        <div><label style={S.label}>Category</label><select style={S.input} value={task.category} onChange={e=>setTask({...task,category:e.target.value})}>{TASK_CATEGORIES.map(c=><option key={c.key} value={c.key}>{c.label}</option>)}</select></div>
         <div><label style={S.label}>Linked Report</label><select style={S.input} value={task.reportId} onChange={e=>setTask({...task,reportId:e.target.value})}><option value="">None</option>{reports.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
         <div><label style={S.label}>Priority</label><select style={S.input} value={task.priority} onChange={e=>setTask({...task,priority:e.target.value})}>{PRIORITIES.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select></div>
-        <div><label style={S.label}>Due Date</label><input type="date" style={S.input} value={task.dueDate} onChange={e=>setTask({...task,dueDate:e.target.value})}/></div>
+        <div>
+          <label style={S.label}>Due Date</label>
+          <div style={{display:"flex",gap:5,marginBottom:6}}>
+            <button type="button" onClick={()=>setDueDate(today)} style={{...S.btn(),padding:"4px 7px",fontSize:10,background:task.dueDate===today?C.accent:C.surface,color:task.dueDate===today?"#fff":C.text}}>Today</button>
+            <button type="button" onClick={()=>setDueDate(localDateOffset(1))} style={{...S.btn(),padding:"4px 7px",fontSize:10,background:task.dueDate===localDateOffset(1)?C.accent:C.surface,color:task.dueDate===localDateOffset(1)?"#fff":C.text}}>Tomorrow</button>
+            <button type="button" onClick={()=>setDueDate("")} style={{...S.btn(),padding:"4px 7px",fontSize:10}}>None</button>
+          </div>
+          <input type="date" style={S.input} value={task.dueDate} onChange={e=>setDueDate(e.target.value)}/>
+        </div>
         <div><label style={S.label}>Estimated Hours</label><input type="number" min="0" step="0.5" style={S.input} value={task.estimatedHours} onChange={e=>setTask({...task,estimatedHours:e.target.value})} placeholder="e.g. 2"/></div>
       </div>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}><button onClick={()=>setShowTask(false)} style={S.btn()}>Cancel</button><button onClick={createTask} style={S.btn("primary")}>Create Task</button></div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}><button onClick={closeTaskModal} style={S.btn()}>Cancel</button><button onClick={createTask} style={S.btn("primary")}>Create Task</button></div>
     </div></div>}
 
     {showBlocker&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&setShowBlocker(false)}><div style={S.modalContent}>
