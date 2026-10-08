@@ -97,14 +97,60 @@ export default function MyDay({ C, S, reports, currentUser }) {
   const [blocker,setBlocker]=useState("");
   const [dailyText,setDailyText]=useState("");
   const [workView,setWorkView]=useState("today");
+  const [showCarryover,setShowCarryover]=useState(false);
+  const [carryoverTasks,setCarryoverTasks]=useState([]);
+  const [carryoverChecked,setCarryoverChecked]=useState(false);
 
   const today=dateKey();
+  const yesterday=localDateOffset(-1);
   useEffect(()=>onSnapshot(collection(db,"tasks"),s=>setTasks(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
   useEffect(()=>onSnapshot(collection(db,"dailyUpdates"),s=>setUpdates(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
   useEffect(()=>onSnapshot(collection(db,"blockers"),s=>setBlockers(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
 
   const todayUpdate=updates.find(x=>x.date===today);
+
+  useEffect(()=>{
+    if(carryoverChecked || !tasks.length) return;
+    const pending=tasks.filter(t=>{
+      if(t.status==="done") return false;
+      const taskDate=t.dueDate || dateKey(t.createdAt);
+      return taskDate===yesterday;
+    });
+    setCarryoverTasks(pending);
+    const key=`agenticBiCarryover:${today}`;
+    if(pending.length && !localStorage.getItem(key)) setShowCarryover(true);
+    setCarryoverChecked(true);
+  },[tasks,carryoverChecked,today,yesterday]);
+
+  const buildDailySnapshot=()=>{
+    const completedTasks=tasks.filter(t=>t.status==="done" && t.completedAt && dateKey(t.completedAt)===today);
+    const pendingTasks=tasks.filter(t=>t.status!=="done" && (t.dueDate===today || dateKey(t.createdAt)===today));
+    const blockedTasks=tasks.filter(t=>t.status==="blocked");
+    const completedLines=completedTasks.length ? completedTasks.map(t=>`• ${t.title}`).join("\\n") : "• None";
+    const pendingLines=pendingTasks.length ? pendingTasks.map(t=>`• ${t.title}`).join("\\n") : "• None";
+    const blockedLines=blockedTasks.length ? blockedTasks.slice(0,8).map(t=>`• ${t.title}`).join("\\n") : "• None";
+    return {
+      completedTaskIds:completedTasks.map(t=>t.id),
+      completedTasks:completedTasks.map(t=>t.title),
+      pendingTaskIds:pendingTasks.map(t=>t.id),
+      pendingTasks:pendingTasks.map(t=>t.title),
+      blockedTaskIds:blockedTasks.map(t=>t.id),
+      blockedTasks:blockedTasks.map(t=>t.title),
+      generatedText:`Completed:\\n${completedLines}\\n\\nPending / Next Focus:\\n${pendingLines}\\n\\nBlocked:\\n${blockedLines}`
+    };
+  };
   useEffect(()=>{ if(todayUpdate) setDailyText(todayUpdate.text||""); },[todayUpdate?.id,todayUpdate?.text]);
+
+  useEffect(()=>{
+    if(!tasks.length) return;
+    const snapshot=buildDailySnapshot();
+    const timer=setTimeout(async()=>{
+      const payload={...snapshot,updatedAt:serverTimestamp(),updatedBy:currentUser};
+      if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),payload).catch(()=>{});
+      else await addDoc(collection(db,"dailyUpdates"),{date:today,createdAt:serverTimestamp(),...payload}).catch(()=>{});
+    },700);
+    return ()=>clearTimeout(timer);
+  },[tasks.length, tasks.map(t=>`${t.id}:${t.status}:${t.completedAt||""}`).join("|"),todayUpdate?.id]);
 
   const metrics=useMemo(()=>{
     const completed=tasks.filter(t=>t.status==="done" && t.completedAt && dateKey(t.completedAt)===today).length;
@@ -156,9 +202,11 @@ export default function MyDay({ C, S, reports, currentUser }) {
     if(window.confirm("Delete this task?")) await deleteDoc(doc(db,"tasks",id));
   };
   const saveDaily=async()=>{
-    if(!dailyText.trim()) return;
-    if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),{text:dailyText.trim(),updatedAt:serverTimestamp(),updatedBy:currentUser});
-    else await addDoc(collection(db,"dailyUpdates"),{date:today,text:dailyText.trim(),createdAt:serverTimestamp(),updatedAt:serverTimestamp(),updatedBy:currentUser});
+    const snapshot=buildDailySnapshot();
+    const text=dailyText.trim() || snapshot.generatedText;
+    const payload={...snapshot,text,updatedAt:serverTimestamp(),updatedBy:currentUser};
+    if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),payload);
+    else await addDoc(collection(db,"dailyUpdates"),{date:today,createdAt:serverTimestamp(),...payload});
   };
   const createBlocker=async()=>{
     if(!blocker.trim()) return;
@@ -268,6 +316,30 @@ export default function MyDay({ C, S, reports, currentUser }) {
         </div>)}
       </div>
     </div>
+
+    {showCarryover&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&setShowCarryover(false)}><div style={{...S.modalContent,maxWidth:620}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:16}}>
+        <div style={{width:42,height:42,borderRadius:11,background:"#FFF7ED",color:"#EA580C",display:"flex",alignItems:"center",justifyContent:"center",fontSize:21}}>↻</div>
+        <div><h2 style={{margin:0,fontSize:18,color:C.text}}>Pending from yesterday</h2><p style={{margin:"4px 0 0",fontSize:12,color:C.textMuted}}>You have {carryoverTasks.length} unfinished task{carryoverTasks.length===1?"":"s"} carried over from {niceDate(yesterday)}.</p></div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:300,overflowY:"auto"}}>
+        {carryoverTasks.map(t=>{
+          const pr=PRIORITIES.find(p=>p.key===t.priority)||PRIORITIES[2];
+          return <div key={t.id} style={{padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:9,background:C.bg,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}>
+            <div><div style={{fontSize:13,fontWeight:650,color:C.text}}>{t.title}</div><div style={{fontSize:10,color:C.textMuted,marginTop:3}}>{t.category||"General"} · {pr.label}</div></div>
+            <span style={badge(pr)}>{pr.label}</span>
+          </div>;
+        })}
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}>
+        <button onClick={()=>{localStorage.setItem(`agenticBiCarryover:${today}`,"dismissed");setShowCarryover(false);}} style={S.btn()}>Review Later</button>
+        <button onClick={async()=>{
+          for(const t of carryoverTasks) await updateDoc(doc(db,"tasks",t.id),{dueDate:today,carriedOverFrom:yesterday,updatedAt:serverTimestamp()});
+          localStorage.setItem(`agenticBiCarryover:${today}`,"carried");
+          setShowCarryover(false);
+        }} style={S.btn("primary")}>Carry All to Today</button>
+      </div>
+    </div></div>
 
     {showTask&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&closeTaskModal()}><div style={S.modalContent}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><div><h2 style={{margin:0,fontSize:17,color:C.text}}>New Daily Task</h2><div style={{fontSize:11,color:C.textMuted,marginTop:3}}>Capture the task quickly, then review before saving.</div></div><button onClick={closeTaskModal} style={{background:"transparent",border:0,fontSize:22,cursor:"pointer",color:C.textMuted}}>×</button></div>
