@@ -39,7 +39,7 @@ const REMARK_CATEGORIES = [
 const REMARK_CAT_MAP = Object.fromEntries(REMARK_CATEGORIES.map(c => [c.key, c]));
 
 const MODULES = ["QHSE", "QDMS", "Audit and Inspection", "PMS", "Procurement"];
-const OWNERS = ["Abin Alex", "Shreyas Krishna", "Nithuna V", "Jastin Willy", "Sudhanshu S", "Sarah"];
+const OWNERS = ["Shreyas Krishna"];
 const CREDENTIALS = { "Shreyas-BI": "Shreyas@211003" };
 
 function fmtDate(ts) {
