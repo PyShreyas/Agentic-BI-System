@@ -9,7 +9,11 @@ const QUICK_PROMPTS = [
   "What is overdue?",
   "What is currently blocked?",
   "Give me my BI workload summary.",
-  "Generate my stand-up update."
+  "Generate my stand-up update.",
+  "Show me COSCO reports.",
+  "Which reports need attention?",
+  "Show stale reports.",
+  "What reports are in Client UAT?"
 ];
 
 const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -43,15 +47,68 @@ function sortByPriorityAndDate(tasks) {
   );
 }
 
+function normalizeReport(report) {
+  return {
+    ...report,
+    searchText: [
+      report.name,
+      report.clientName,
+      report.client,
+      report.module,
+      report.owner,
+      report.priority,
+      report.status,
+      ...(report.remarks || []).filter(r => !r.resolved).map(r => r.text)
+    ].filter(Boolean).join(" ").toLowerCase()
+  };
+}
+
+function reportStatusLabel(status) {
+  return String(status || "unknown").replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function findReportMatches(prompt, reports) {
+  const q = prompt.toLowerCase().trim();
+  const normalized = reports.map(normalizeReport);
+  const words = q.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  const stopWords = new Set(["show", "which", "what", "reports", "report", "need", "attention", "status", "are", "the", "for", "with", "from", "that", "have", "has", "currently"]);
+  const queryWords = words.filter(w => !stopWords.has(w));
+  return normalized.map(report => {
+    const score = queryWords.reduce((sum, word) => sum + (report.searchText.includes(word) ? 1 : 0), 0);
+    return { report, score };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score || String(a.report.name || "").length - String(b.report.name || "").length).map(x => x.report);
+}
+
+function isStaleReport(report) {
+  if (!report || report.status === "deployed_live" || !report.updatedAt) return false;
+  const d = report.updatedAt.toDate ? report.updatedAt.toDate() : new Date(report.updatedAt);
+  return !Number.isNaN(d.getTime()) && Date.now() - d.getTime() > 3 * 86400000;
+}
+
+function reportsNeedingAttention(reports) {
+  return reports.filter(r =>
+    ["pending_clarification", "client_uat", "internal_review", "sign_off"].includes(r.status) ||
+    ["critical", "high"].includes(r.priority) ||
+    isStaleReport(r)
+  );
+}
+
 function detectIntent(prompt) {
   const q = prompt.toLowerCase().trim();
+
+  // Action intents must win before broad informational matches.
+  if (/create|add|new task/.test(q)) return "createTask";
+  if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
+  if (/delete|remove|archive.*task/.test(q)) return "deleteTask";
+  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
+  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
+  if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
 
   if (/stand[- ]?up|daily update/.test(q)) return "standup";
   if (/blocked|blocker/.test(q)) return "blocked";
   if (/overdue|past due|late/.test(q)) return "overdue";
   if (/workload|summary|how am i doing|how much work/.test(q)) return "workload";
   if (/what should i (work|do)|what do i work on|today('s)? (work|tasks)|tasks? today/.test(q)) return "today";
-  if (/create|add|new task/.test(q)) return "createTask";
   if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
   if (/delete|remove|archive.*task/.test(q)) return "deleteTask";
   if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
@@ -59,6 +116,9 @@ function detectIntent(prompt) {
   if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
   if (/high priority|critical|urgent/.test(q)) return "priority";
   if (/how many tasks|task count|number of tasks/.test(q)) return "taskCount";
+  if (/stale|outdated|old reports?/.test(q)) return "staleReports";
+  if (/need attention|needs attention|at risk|attention needed|which reports? should i focus/.test(q)) return "reportAttention";
+  if (/report.*(for|from|of)|reports? (for|from|of)|show.*reports?|find.*reports?|search.*reports?|client|module/.test(q)) return "reportSearch";
   if (/reports? (in|at)|report status|reports? status|which reports?/.test(q)) return "reports";
   if (/delete|remove.*task/.test(q)) return "deleteTask";
   if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
@@ -117,7 +177,7 @@ function parseStatus(prompt) {
   return "";
 }
 
-function buildAnswer(intent, tasks, reports) {
+function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   const today = dateKey();
   const tomorrow = addDaysKey(1);
   const active = activeTasks(tasks);
@@ -159,6 +219,28 @@ function buildAnswer(intent, tasks, reports) {
     active.forEach(t => { const c = t.category || "General"; byCategory[c] = (byCategory[c] || 0) + 1; });
     const categoryText = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k}: ${v}`).join(" · ");
     return `BI workload snapshot:\n\nReports: ${reports.length}\nActive tasks: ${active.length}\nIn progress: ${inProgress.length}\nBlocked: ${blocked.length}\nOverdue: ${overdue.length}\n\nTask mix: ${categoryText || "No active task categories yet."}`;
+  }
+
+  if (intent === "staleReports") {
+    const stale = reports.filter(isStaleReport);
+    return stale.length
+      ? "Stale reports (>3 days, excluding live):\n\n" + stale.slice(0, 12).map(r => `• ${r.name || "Unnamed report"} — ${reportStatusLabel(r.status)} — ${r.clientName || r.client || "No client"}`).join("\n")
+      : "No stale reports were detected. Reports older than 3 days are flagged unless they are deployed live.";
+  }
+
+  if (intent === "reportAttention") {
+    const attention = reportsNeedingAttention(reports);
+    return attention.length
+      ? "Reports needing attention:\n\n" + attention.slice(0, 12).map(r => `• ${r.name || "Unnamed report"} — ${reportStatusLabel(r.status)} — ${r.priority || "medium"}${isStaleReport(r) ? " — Stale" : ""}`).join("\n")
+      : "No reports are currently flagged for attention.";
+  }
+
+  if (intent === "reportSearch") {
+    const matches = findReportMatches(promptForAgent, reports);
+    if (!matches.length) return "I couldn't find a report matching that client, module, name, or keyword.";
+    return "Matching reports:\n\n" + matches.slice(0, 10).map(r =>
+      `• ${r.name || "Unnamed report"} — ${reportStatusLabel(r.status)} — ${r.clientName || r.client || "No client"} — ${r.module || "No module"} — ${r.priority || "medium"}`
+    ).join("\n");
   }
 
   if (intent === "reports") {
@@ -274,6 +356,10 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
             response = `I prepared this action for “${task.title}”.`;
           }
         }
+      } else if (intent === "reportSearch") {
+        response = buildAnswer(intent, tasks, reports, text);
+      } else if (intent === "staleReports" || intent === "reportAttention") {
+        response = buildAnswer(intent, tasks, reports, text);
       } else if (intent === "completeTask") {
         const task = findTaskMention(text, tasks);
         if (!task) response = "I couldn't identify which task you want to complete. Include the task name.";
@@ -282,7 +368,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
           response = `I prepared this action:\n\nMark “${task.title}” as Done.`;
         }
       } else {
-        response = buildAnswer(intent, tasks, reports);
+        response = buildAnswer(intent, tasks, reports, text);
       }
       setMessages(m => [...m, { role: "assistant", text: response }]);
     } finally {
