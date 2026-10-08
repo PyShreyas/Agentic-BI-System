@@ -163,7 +163,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
     const timer=setTimeout(async()=>{
       const payload={...snapshot,updatedAt:serverTimestamp(),updatedBy:currentUser};
       if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),payload).catch(()=>{});
-      else await addDoc(collection(db,"dailyUpdates"),{date:today,text:snapshot.generatedText,createdAt:serverTimestamp(),...payload}).catch(()=>{});
+      else await addDoc(collection(db,"dailyUpdates"),{date:today,text:snapshot.generatedText,tomorrowText:snapshot.generatedTomorrowText,createdAt:serverTimestamp(),...payload}).catch(()=>{});
     },700);
     return ()=>clearTimeout(timer);
   },[tasks.length, tasks.map(t=>`${t.id}:${t.status}:${t.completedAt||""}`).join("|"),todayUpdate?.id]);
