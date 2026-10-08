@@ -57,7 +57,7 @@ export default function History({ C, S, reports }) {
   const hours = filtered.reduce((sum,t) => sum + Number(t.actualHours || 0),0);
   const high = filtered.filter(t => ["critical","high"].includes(t.priority)).length;
   const reportCount = new Set(filtered.map(t => t.reportId).filter(Boolean)).size;
-  const updateHistory = useMemo(() => updates.filter(u => u.completedTasks?.length || u.text).sort((a,b) => String(b.date).localeCompare(String(a.date))).slice(0,10), [updates]);
+  const updateHistory = useMemo(() => updates.filter(u => u.completedTasks?.length || u.text || u.tomorrowText).sort((a,b) => String(b.date).localeCompare(String(a.date))).slice(0,10), [updates]);
 
   return <div style={{display:"flex",flexDirection:"column",gap:16}}>
     <div style={{...S.card,background:"linear-gradient(135deg,"+C.accent+" 0%,#0B5FFF 100%)",border:"none",color:"#fff"}}>
@@ -109,7 +109,14 @@ export default function History({ C, S, reports }) {
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {updateHistory.map(u => <div key={u.id} style={{padding:"11px 12px",border:"1px solid "+C.border,borderRadius:9,background:C.bg}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:10}}><strong style={{fontSize:12,color:C.text}}>{niceDate(u.date)}</strong><span style={{fontSize:10,color:C.textMuted}}>{u.completedTasks?.length||0} completed · {u.pendingTasks?.length||0} pending</span></div>
-          {u.text && <pre style={{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:11,lineHeight:1.5,color:C.textMuted,margin:"7px 0 0"}}>{u.text}</pre>}
+          {u.text && <div style={{marginTop:7}}>
+  <div style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",marginBottom:3}}>Today</div>
+  <pre style={{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:11,lineHeight:1.5,color:C.textMuted,margin:0}}>{u.text}</pre>
+</div>}
+{u.tomorrowText && <div style={{marginTop:10,paddingTop:9,borderTop:"1px solid "+C.border}}>
+  <div style={{fontSize:10,fontWeight:700,color:"#0B5FFF",textTransform:"uppercase",marginBottom:3}}>Tomorrow / Next Day Plan</div>
+  <pre style={{whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:11,lineHeight:1.5,color:C.textMuted,margin:0}}>{u.tomorrowText}</pre>
+</div>}
         </div>)}
       </div>}
     </div>
