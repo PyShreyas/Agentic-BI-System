@@ -16,7 +16,11 @@ const QUICK_PROMPTS = [
   "Show me COSCO reports.",
   "Which reports need attention?",
   "Show stale reports.",
-  "What reports are in Client UAT?"
+  "What reports are in Client UAT?",
+  "Run a QA check.",
+  "What needs fixing before UAT?",
+  "Is anything missing from my reports?",
+  "Give me a pre-release QA checklist."
 ];
 
 const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -96,6 +100,75 @@ function reportsNeedingAttention(reports) {
   );
 }
 
+function getReportQaIssues(report) {
+  const issues = [];
+  const name = String(report.name || "").trim();
+  const client = String(report.clientName || report.client || report.clientId || "").trim();
+  const module = String(report.module || "").trim();
+  const owner = String(report.owner || "").trim();
+  const status = String(report.status || "").trim();
+  const priority = String(report.priority || "").trim();
+
+  if (!name) issues.push("Missing report name");
+  if (!client) issues.push("Missing client");
+  if (!module) issues.push("Missing module");
+  if (!owner) issues.push("Missing owner");
+  if (!status) issues.push("Missing status");
+  if (!priority) issues.push("Missing priority");
+
+  if (["client_uat", "sign_off", "maersk_approved"].includes(status) && !report.devNotes) {
+    issues.push("Missing developer notes");
+  }
+
+  const unresolvedRemarks = Array.isArray(report.remarks)
+    ? report.remarks.filter(r => !r.resolved && r.text).length
+    : 0;
+
+  if (unresolvedRemarks > 0) issues.push(`${unresolvedRemarks} unresolved remark${unresolvedRemarks === 1 ? "" : "s"}`);
+  if (isStaleReport(report)) issues.push("Stale >3 days");
+
+  return issues;
+}
+
+function runQaChecks(tasks, reports) {
+  const active = activeTasks(tasks);
+  const taskIssues = [];
+
+  active.forEach(task => {
+    if (!task.title?.trim()) taskIssues.push({ type: "Task", item: task.id, issues: ["Missing task title"] });
+    if (!task.priority) taskIssues.push({ type: "Task", item: task.title || task.id, issues: ["Missing priority"] });
+    if (task.status === "blocked" && !task.dueDate) taskIssues.push({ type: "Task", item: task.title || task.id, issues: ["Blocked task has no due date"] });
+    if (task.dueDate && task.dueDate < dateKey() && task.status !== "blocked") taskIssues.push({ type: "Task", item: task.title || task.id, issues: ["Overdue and still active"] });
+  });
+
+  const reportIssues = reports
+    .map(report => ({ report, issues: getReportQaIssues(report) }))
+    .filter(x => x.issues.length)
+    .map(x => ({
+      type: "Report",
+      item: x.report.name || x.report.id || "Unnamed report",
+      issues: x.issues
+    }));
+
+  const releaseReady = reports.filter(r =>
+    ["sign_off", "maersk_approved"].includes(r.status) &&
+    getReportQaIssues(r).length === 0
+  );
+
+  const uatRisks = reports.filter(r =>
+    r.status === "client_uat" &&
+    getReportQaIssues(r).length > 0
+  );
+
+  return {
+    taskIssues,
+    reportIssues,
+    totalIssues: taskIssues.length + reportIssues.length,
+    releaseReady,
+    uatRisks
+  };
+}
+
 function detectIntent(prompt) {
   const q = prompt.toLowerCase().trim();
 
@@ -108,6 +181,7 @@ function detectIntent(prompt) {
   if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
 
   if (/stand[- ]?up|daily update/.test(q)) return "standup";
+  if (/qa|quality|check.*report|missing.*report|pre[- ]?uat|before uat|pre[- ]?release|release checklist|what.*fix/.test(q)) return "qa";
   if (/blocked|blocker/.test(q)) return "blocked";
   if (/overdue|past due|late/.test(q)) return "overdue";
   if (/workload|summary|how am i doing|how much work/.test(q)) return "workload";
@@ -236,6 +310,18 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "") {
     active.forEach(t => { const c = t.category || "General"; byCategory[c] = (byCategory[c] || 0) + 1; });
     const categoryText = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k}: ${v}`).join(" · ");
     return `BI workload snapshot:\n\nReports: ${reports.length}\nActive tasks: ${active.length}\nIn progress: ${inProgress.length}\nBlocked: ${blocked.length}\nOverdue: ${overdue.length}\n\nTask mix: ${categoryText || "No active task categories yet."}`;
+  }
+
+  if (intent === "qa") {
+    const qa = runQaChecks(tasks, reports);
+    const issueItems = [...qa.reportIssues, ...qa.taskIssues];
+
+    if (!issueItems.length) {
+      return `QA check passed. No missing or suspicious task/report data was detected.\\n\\nRelease-ready reports: ${qa.releaseReady.length}.\\nClient UAT reports with issues: ${qa.uatRisks.length}.`;
+    }
+
+    const topIssues = issueItems.slice(0, 12).map(x => `• ${x.item} — ${x.issues.join(", ")}`).join("\\n");
+    return `QA findings: ${qa.totalIssues} item${qa.totalIssues === 1 ? "" : "s"} need attention.\\n\\n${topIssues}\\n\\nClient UAT at risk: ${qa.uatRisks.length}\\nRelease-ready: ${qa.releaseReady.length}\\n\\nRecommendation: resolve missing information and unresolved remarks before UAT or release.`;
   }
 
   if (intent === "staleReports") {
@@ -452,7 +538,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         ["📋 Task Agent", "Reads tasks, priorities and deadlines, and prepares approved task actions."],
         ["📊 Report Agent", "Searches reports by client, module and name, and identifies stale or attention-needed reports."],
         ["☀️ My Day Agent", "Builds a morning briefing, ranks today's work, surfaces overdue items and recommends the next action."],
-        ["🧪 QA Ready", "The next agent layer can add deterministic data-quality and release checks."]
+        ["🧪 QA Agent", "Checks missing report fields, unresolved remarks, stale items, suspicious task states and UAT/release readiness."]
       ].map(([title, desc]) => <div key={title} style={{ ...S.card, padding: 13 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{title}</div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>{desc}</div>
