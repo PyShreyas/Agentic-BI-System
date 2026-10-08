@@ -20,7 +20,11 @@ const QUICK_PROMPTS = [
   "Run a QA check.",
   "What needs fixing before UAT?",
   "Is anything missing from my reports?",
-  "Give me a pre-release QA checklist."
+  "Give me a pre-release QA checklist.",
+  "Write my stand-up update.",
+  "Create developer notes for my active report.",
+  "Summarize my latest BI work.",
+  "Draft a UAT update."
 ];
 
 const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -169,6 +173,110 @@ function runQaChecks(tasks, reports) {
   };
 }
 
+function findDocumentationReport(prompt, reports) {
+  const matches = findReportMatches(prompt, reports);
+  return matches[0] || reports.find(r => r.status !== "deployed_live") || reports[0] || null;
+}
+
+function buildDocumentation(intent, tasks, reports, prompt = "") {
+  const today = dateKey();
+  const active = activeTasks(tasks);
+  const dueToday = active.filter(t => t.dueDate === today);
+  const overdue = active.filter(t => t.dueDate && t.dueDate < today);
+  const inProgress = active.filter(t => t.status === "in_progress");
+  const blocked = active.filter(t => t.status === "blocked");
+  const completed = tasks.filter(t => t.status === "done" && (dateKey(t.completedAt) === today || dateKey(t.updatedAt) === today));
+
+  if (intent === "docStandup") {
+    return `DAILY STAND-UP UPDATE
+Date: ${today}
+
+Completed
+${completed.map(t => `• ${t.title}`).join("\n") || "• No tasks marked completed today."}
+
+In Progress
+${inProgress.map(t => `• ${t.title}`).join("\n") || "• None."}
+
+Planned / Due Today
+${dueToday.map(t => `• ${t.title}`).join("\n") || "• No tasks due today."}
+
+Blockers
+${blocked.map(t => `• ${t.title}`).join("\n") || "• None."}
+
+Overdue
+${overdue.map(t => `• ${t.title}`).join("\n") || "• None."}`;
+  }
+
+  if (intent === "workSummary") {
+    const report = findDocumentationReport(prompt, reports);
+    return `BI WORK SUMMARY
+
+Date: ${today}
+
+Overall Activity
+• Active tasks: ${active.length}
+• Completed today: ${completed.length}
+• In progress: ${inProgress.length}
+• Blocked: ${blocked.length}
+• Overdue: ${overdue.length}
+• Reports tracked: ${reports.length}
+
+Key Work
+${[...completed, ...inProgress, ...dueToday].slice(0, 8).map(t => `• ${t.title}`).join("\n") || "• No recent task activity available."}
+
+${report ? `Focus Report
+• ${report.name || "Unnamed report"}
+• Client: ${report.clientName || report.client || "Not specified"}
+• Module: ${report.module || "Not specified"}
+• Status: ${reportStatusLabel(report.status)}
+• Priority: ${report.priority || "Not specified"}` : ""}`;
+  }
+
+  if (intent === "developerNotes") {
+    const report = findDocumentationReport(prompt, reports);
+    if (!report) return "I couldn't identify a report for the developer notes. Include the report name, client or module.";
+    const unresolved = Array.isArray(report.remarks) ? report.remarks.filter(r => !r.resolved && r.text).map(r => r.text) : [];
+    return `DEVELOPER NOTES
+
+Report: ${report.name || "Unnamed report"}
+Client: ${report.clientName || report.client || "Not specified"}
+Module: ${report.module || "Not specified"}
+Status: ${reportStatusLabel(report.status)}
+Priority: ${report.priority || "Not specified"}
+
+Current State
+• Report is currently in ${reportStatusLabel(report.status)}.
+• Owner: ${report.owner || "Not assigned"}.
+
+Current Remarks
+${unresolved.map(r => `• ${r}`).join("\n") || "• No unresolved remarks recorded."}
+
+Recommended Documentation
+• Validate report requirements and latest business clarification.
+• Confirm DAX/model/visual changes before sign-off.
+• Record UAT or reviewer feedback in the report remarks.
+• Update the report status after validation.`;
+  }
+
+  if (intent === "uatUpdate") {
+    const uat = reports.filter(r => r.status === "client_uat");
+    const risks = uat.filter(r => getReportQaIssues(r).length > 0);
+    return `UAT STATUS UPDATE
+
+Date: ${today}
+Client UAT Reports: ${uat.length}
+UAT Reports With QA Findings: ${risks.length}
+
+Reports
+${uat.map(r => `• ${r.name || "Unnamed report"} — ${r.clientName || r.client || "No client"} — ${r.priority || "medium"}${getReportQaIssues(r).length ? " — QA attention required" : " — No current QA findings"}`).join("\n") || "• No reports are currently in Client UAT."}
+
+Next Actions
+${risks.map(r => `• Resolve QA findings for ${r.name || "Unnamed report"}`).join("\n") || "• Continue UAT monitoring and capture client feedback."}`;
+  }
+
+  return "I can generate stand-up updates, work summaries, developer notes and UAT updates from your current BI tracker data.";
+}
+
 function detectIntent(prompt) {
   const q = prompt.toLowerCase().trim();
 
@@ -180,6 +288,10 @@ function detectIntent(prompt) {
   if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
   if (/change.*status|set.*status|mark.*in progress|start.*task|working on/.test(q)) return "updateStatus";
 
+  if (/write.*stand[- ]?up|draft.*stand[- ]?up/.test(q)) return "docStandup";
+  if (/developer notes?|dev notes?|technical notes?/.test(q)) return "developerNotes";
+  if (/uat update|uat status|client update/.test(q)) return "uatUpdate";
+  if (/work summary|summarize.*work|change summary|work.*summary/.test(q)) return "workSummary";
   if (/stand[- ]?up|daily update/.test(q)) return "standup";
   if (/qa|quality|check.*report|missing.*report|pre[- ]?uat|before uat|pre[- ]?release|release checklist|what.*fix/.test(q)) return "qa";
   if (/blocked|blocker/.test(q)) return "blocked";
@@ -223,10 +335,6 @@ function findTaskMention(prompt, tasks) {
     return { task: t, score };
   }).filter(x => x.score > 0).sort((a,b) => b.score-a.score || a.task.title.length-b.task.title.length);
   return scored[0]?.task || null;
-  return tasks
-    .filter(t => t.title)
-    .sort((a, b) => b.title.length - a.title.length)
-    .find(t => q.includes(t.title.toLowerCase()));
 }
 
 function parsePriority(prompt) {
@@ -322,6 +430,10 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "") {
 
     const topIssues = issueItems.slice(0, 12).map(x => `• ${x.item} — ${x.issues.join(", ")}`).join("\\n");
     return `QA findings: ${qa.totalIssues} item${qa.totalIssues === 1 ? "" : "s"} need attention.\\n\\n${topIssues}\\n\\nClient UAT at risk: ${qa.uatRisks.length}\\nRelease-ready: ${qa.releaseReady.length}\\n\\nRecommendation: resolve missing information and unresolved remarks before UAT or release.`;
+  }
+
+  if (["docStandup", "workSummary", "developerNotes", "uatUpdate"].includes(intent)) {
+    return buildDocumentation(intent, tasks, reports, promptForAgent);
   }
 
   if (intent === "staleReports") {
@@ -538,7 +650,8 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         ["📋 Task Agent", "Reads tasks, priorities and deadlines, and prepares approved task actions."],
         ["📊 Report Agent", "Searches reports by client, module and name, and identifies stale or attention-needed reports."],
         ["☀️ My Day Agent", "Builds a morning briefing, ranks today's work, surfaces overdue items and recommends the next action."],
-        ["🧪 QA Agent", "Checks missing report fields, unresolved remarks, stale items, suspicious task states and UAT/release readiness."]
+        ["🧪 QA Agent", "Checks missing report fields, unresolved remarks, stale items, suspicious task states and UAT/release readiness."],
+        ["📝 Documentation Agent", "Generates stand-ups, work summaries, developer notes and UAT updates from live tracker data."]
       ].map(([title, desc]) => <div key={title} style={{ ...S.card, padding: 13 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{title}</div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>{desc}</div>
