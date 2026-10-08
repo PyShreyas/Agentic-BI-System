@@ -5,6 +5,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import MyDay from "./MyDay";
+import AskMyBI from "./AskMyBI";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
@@ -650,6 +651,7 @@ export default function App() {
 
   const navItems = [
     { key: "myday", icon: "ti-calendar-check", label: "My Day" },
+    { key: "askbi", icon: "ti-sparkles", label: "Ask My BI" },
     { key: "dashboard", icon: "ti-layout-dashboard", label: "Dashboard" },
     { key: "tracker", icon: "ti-report-analytics", label: "Report Tracker" },
     { key: "analytics", icon: "ti-chart-bar", label: "Analytics" },
@@ -736,6 +738,7 @@ export default function App() {
           <div>
             <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>
               {view === "myday" && "My Day"}
+              {view === "askbi" && "Ask My BI"}
               {view === "dashboard" && "Dashboard"}
               {view === "tracker" && (selectedReport ? selectedReport.name : "Report Tracker")}
               {view === "analytics" && "Analytics"}
@@ -782,6 +785,9 @@ export default function App() {
 
           {/* My Day */}
           {view === "myday" && <MyDay C={C} S={S} reports={reports} currentUser={currentUser} />}
+
+          {/* Ask My BI */}
+          {view === "askbi" && <AskMyBI C={C} S={S} reports={reports} currentUser={currentUser} />}
 
           {/* Dashboard */}
           {view === "dashboard" && (
