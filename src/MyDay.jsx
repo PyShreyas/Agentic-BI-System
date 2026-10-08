@@ -53,7 +53,7 @@ export default function MyDay({ C, S, reports, currentUser }) {
   useEffect(()=>{ if(todayUpdate) setDailyText(todayUpdate.text||""); },[todayUpdate?.id,todayUpdate?.text]);
 
   const metrics=useMemo(()=>{
-    const completed=tasks.filter(t=>t.status==="done" && String(t.completedAt||"").slice(0,10)===today).length;
+    const completed=tasks.filter(t=>t.status==="done" && t.completedAt && dateKey(t.completedAt)===today).length;
     const blocked=tasks.filter(t=>t.status==="blocked").length;
     const overdue=tasks.filter(t=>t.status!=="done" && t.dueDate && t.dueDate<today).length;
     const high=tasks.filter(t=>t.status!=="done" && ["critical","high"].includes(t.priority)).length;
