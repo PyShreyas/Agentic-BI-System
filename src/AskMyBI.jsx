@@ -56,15 +56,54 @@ function detectIntent(prompt) {
   if (/reports? (in|at)|report status|reports? status|which reports?/.test(q)) return "reports";
   if (/create|add|new task/.test(q)) return "createTask";
   if (/complete|mark.*done|finish.*task/.test(q)) return "completeTask";
+  if (/delete|remove.*task/.test(q)) return "deleteTask";
+  if (/change.*priority|set.*priority|make.*critical|make.*high|make.*medium|make.*low|repriorit/.test(q)) return "updatePriority";
+  if (/due date|deadline|due tomorrow|due today|move.*deadline|change.*deadline/.test(q)) return "updateDueDate";
+  if (/in progress|start.*task|working on/.test(q)) return "updateStatus";
   return "help";
 }
 
+function findTaskMatches(prompt, tasks) {
+  const q = prompt.toLowerCase();
+  return tasks
+    .filter(t => t.title && q.includes(t.title.toLowerCase()))
+    .sort((a, b) => b.title.length - a.title.length);
+}
+
 function findTaskMention(prompt, tasks) {
+  const matches = findTaskMatches(prompt, tasks);
+  if (matches.length) return matches[0];
   const q = prompt.toLowerCase();
   return tasks
     .filter(t => t.title)
     .sort((a, b) => b.title.length - a.title.length)
     .find(t => q.includes(t.title.toLowerCase()));
+}
+
+function parsePriority(prompt) {
+  const q = prompt.toLowerCase();
+  if (/critical/.test(q)) return "critical";
+  if (/high|urgent/.test(q)) return "high";
+  if (/medium/.test(q)) return "medium";
+  if (/low/.test(q)) return "low";
+  return "";
+}
+
+function parseDueDate(prompt) {
+  const q = prompt.toLowerCase();
+  if (/tomorrow/.test(q)) return addDaysKey(1);
+  if (/today/.test(q)) return dateKey();
+  const match = q.match(/(20\\d{2}-\\d{2}-\\d{2})/);
+  return match ? match[1] : "";
+}
+
+function parseStatus(prompt) {
+  const q = prompt.toLowerCase();
+  if (/blocked/.test(q)) return "blocked";
+  if (/in progress|start.*task|working on/.test(q)) return "in_progress";
+  if (/to do|todo|backlog/.test(q)) return "todo";
+  if (/done|complete|completed/.test(q)) return "done";
+  return "";
 }
 
 function buildAnswer(intent, tasks, reports) {
@@ -164,6 +203,19 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
           createdDate: dateKey(), createdAt: serverTimestamp(), updatedAt: serverTimestamp()
         });
         setMessages(m => [...m, { role: "assistant", text: `Task created: ${t.title} — ${t.priority} — ${t.dueDate || "No due date"}.` }]);
+      } else if (pendingAction.type === "updateTask") {
+        const updates = { updatedAt: serverTimestamp() };
+        if (pendingAction.priority) updates.priority = pendingAction.priority;
+        if (pendingAction.dueDate !== undefined) updates.dueDate = pendingAction.dueDate;
+        if (pendingAction.status) {
+          updates.status = pendingAction.status;
+          if (pendingAction.status === "done") updates.completedAt = serverTimestamp();
+        }
+        await updateDoc(doc(db, "tasks", pendingAction.task.id), updates);
+        setMessages(m => [...m, { role: "assistant", text: `Task updated: ${pendingAction.task.title}.` }]);
+      } else if (pendingAction.type === "deleteTask") {
+        await updateDoc(doc(db, "tasks", pendingAction.task.id), { status: "deleted", updatedAt: serverTimestamp() });
+        setMessages(m => [...m, { role: "assistant", text: `Task archived: ${pendingAction.task.title}.` }]);
       } else if (pendingAction.type === "completeTask") {
         await updateDoc(doc(db, "tasks", pendingAction.task.id), {
           status: "done", completedAt: serverTimestamp(), updatedAt: serverTimestamp()
@@ -192,6 +244,25 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         const data = parseCreateTask(text);
         setPendingAction({ type: "createTask", data });
         response = `I prepared this action:\n\nCreate task: ${data.title}\nCategory: ${data.category}\nPriority: ${data.priority}\nDue: ${data.dueDate || "No due date"}`;
+      } else if (["updatePriority","updateDueDate","updateStatus","deleteTask"].includes(intent)) {
+        const task = findTaskMention(text, tasks);
+        if (!task) {
+          response = "I couldn't identify which task you mean. Include the exact task name.";
+        } else if (intent === "deleteTask") {
+          setPendingAction({ type: "deleteTask", task });
+          response = `I prepared this action:\n\nArchive task: ${task.title}`;
+        } else {
+          const action = { type: "updateTask", task };
+          if (intent === "updatePriority") action.priority = parsePriority(text);
+          if (intent === "updateDueDate") action.dueDate = parseDueDate(text);
+          if (intent === "updateStatus") action.status = parseStatus(text);
+          if (!action.priority && action.dueDate === undefined && !action.status) {
+            response = "Please specify the new priority, due date (today, tomorrow, or YYYY-MM-DD), or status.";
+          } else {
+            setPendingAction(action);
+            response = `I prepared this action for “${task.title}”.`;
+          }
+        }
       } else if (intent === "completeTask") {
         const task = findTaskMention(text, tasks);
         if (!task) response = "I couldn't identify which task you want to complete. Include the task name.";
@@ -229,7 +300,9 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       <div style={{ marginTop: 6, fontSize: 13, color: C.text, whiteSpace: "pre-wrap" }}>
         {pendingAction.type === "createTask"
           ? `Create “${pendingAction.data.title}” · ${pendingAction.data.category} · ${pendingAction.data.priority} · ${pendingAction.data.dueDate || "No due date"}`
-          : `Mark “${pendingAction.task.title}” as Done`}
+          : pendingAction.type === "deleteTask"
+            ? `Archive “${pendingAction.task.title}”`
+            : `Update “${pendingAction.task.title}”${pendingAction.priority ? ` · Priority: ${pendingAction.priority}` : ""}${pendingAction.dueDate !== undefined ? ` · Due: ${pendingAction.dueDate || "No due date"}` : ""}${pendingAction.status ? ` · Status: ${STATUS_LABELS[pendingAction.status] || pendingAction.status}` : ""}`}
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <button onClick={executeAction} disabled={sending} style={S.btn("primary")}>{sending ? "Executing..." : "Approve & Execute"}</button>
