@@ -101,8 +101,28 @@ const CatBadge = ({ catKey }) => {
   );
 };
 
-const ReportForm = ({ initial, onSave, onCancel, title, saving, C, S }) => {
-  const [form, setForm] = useState({ name: "", module: MODULES[0], owner: OWNERS[0], priority: "high", status: "backlog", ...initial });
+const ClientForm = ({ onSave, onCancel, saving, C, S }) => {
+  const [name, setName] = useState("");
+  return (
+    <div style={S.modal} onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div style={S.modalContent}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: 17, color: C.text, fontWeight: 600 }}>Add Client</h2>
+          <button onClick={onCancel} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.textMuted }}>×</button>
+        </div>
+        <label style={S.label}>Client Name *</label>
+        <input autoFocus style={S.input} value={name} onChange={e => setName(e.target.value)} placeholder="Enter client name" onKeyDown={e => e.key === "Enter" && name.trim() && onSave(name.trim())} />
+        <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
+          <button onClick={onCancel} style={S.btn()}>Cancel</button>
+          <button onClick={() => name.trim() && onSave(name.trim())} style={S.btn("primary")} disabled={saving}>{saving ? "Saving..." : "Add Client"}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ReportForm = ({ initial, onSave, onCancel, title, saving, C, S, clients = [] }) => {
+  const [form, setForm] = useState({ name: "", clientId: initial?.clientId || "", module: MODULES[0], owner: OWNERS[0], priority: "high", status: "backlog", ...initial });
   return (
     <div style={S.modal} onClick={e => e.target === e.currentTarget && onCancel()}>
       <div style={S.modalContent}>
@@ -111,6 +131,13 @@ const ReportForm = ({ initial, onSave, onCancel, title, saving, C, S }) => {
           <button onClick={onCancel} style={{ background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: C.textMuted }}>×</button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div>
+            <label style={S.label}>Client</label>
+            <select style={S.input} value={form.clientId || ""} onChange={e => setForm(f => ({ ...f, clientId: e.target.value }))}>
+              <option value="">Unassigned</option>
+              {clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}
+            </select>
+          </div>
           <div style={{ gridColumn: "1/-1" }}>
             <label style={S.label}>Report Name *</label>
             <input style={S.input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Enter report name" />
@@ -474,6 +501,7 @@ export default function App() {
   const [loginErr, setLoginErr] = useState("");
   const [view, setView] = useState("dashboard");
   const [reports, setReports] = useState([]);
+  const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -482,6 +510,9 @@ export default function App() {
   const [filterModule, setFilterModule] = useState("all");
   const [selectedReport, setSelectedReport] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [clientSaving, setClientSaving] = useState(false);
+  const [filterClient, setFilterClient] = useState("all");
   const [editingReport, setEditingReport] = useState(null);
   const [kanbanMode, setKanbanMode] = useState(false);
   const [dragItem, setDragItem] = useState(null);
@@ -498,6 +529,16 @@ export default function App() {
     });
     return () => unsub();
   }, [authed]);
+  
+  useEffect(() => {
+    if (!authed) return;
+    const unsub = onSnapshot(collection(db, "clients"), snapshot => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      setClients(data);
+    });
+    return () => unsub();
+  }, [authed]);
 
   const handleLogin = () => {
     if (CREDENTIALS[loginUser] && CREDENTIALS[loginUser] === loginPass) {
@@ -505,10 +546,24 @@ export default function App() {
     } else { setLoginErr("Invalid credentials. Please try again."); }
   };
 
+  const handleAddClient = async (name) => {
+    setClientSaving(true);
+    try {
+      if (clients.some(c => c.name?.trim().toLowerCase() === name.trim().toLowerCase())) {
+        alert("A client with this name already exists.");
+        return;
+      }
+      await addDoc(collection(db, "clients"), { name: name.trim(), createdAt: serverTimestamp(), createdBy: currentUser });
+      setShowClientModal(false);
+    } catch (e) { console.error(e); }
+    finally { setClientSaving(false); }
+  };
+
   const handleAddReport = async (data) => {
     setSaving(true);
     try {
-      await addDoc(collection(db, "reports"), { ...data, remarks: [], devNotes: "", createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
+      const client = clients.find(c => c.id === data.clientId);
+      await addDoc(collection(db, "reports"), { ...data, clientName: client?.name || "Unassigned", remarks: [], devNotes: "", createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
     } catch (e) { console.error(e); }
     setSaving(false); setShowAddModal(false);
   };
@@ -516,7 +571,8 @@ export default function App() {
   const handleEditReport = async (data) => {
     setSaving(true);
     try {
-      await updateDoc(doc(db, "reports", editingReport.id), { ...data, updatedAt: serverTimestamp(), lastEditedBy: currentUser });
+      const client = clients.find(c => c.id === data.clientId);
+      await updateDoc(doc(db, "reports", editingReport.id), { ...data, clientName: client?.name || "Unassigned", updatedAt: serverTimestamp(), lastEditedBy: currentUser });
     } catch (e) { console.error(e); }
     setSaving(false); setEditingReport(null);
   };
@@ -541,6 +597,7 @@ export default function App() {
   const filteredReports = reports.filter(r => {
     if (filterStatus !== "all" && r.status !== filterStatus) return false;
     if (filterModule !== "all" && r.module !== filterModule) return false;
+    if (filterClient !== "all" && r.clientId !== filterClient) return false;
     if (searchTerm && !r.name?.toLowerCase().includes(searchTerm.toLowerCase()) && !r.owner?.toLowerCase().includes(searchTerm.toLowerCase()) && !r.module?.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     return true;
   });
@@ -565,9 +622,9 @@ export default function App() {
     text: darkMode ? "#E2E8F0" : "#0F172A",
     textMuted: darkMode ? "#94A3B8" : "#64748B",
     sidebar: darkMode ? "#0F172A" : "#FFFFFF",
-    accent: "#0B5FFF",
+    accent: "#072E55",
     accentBg: darkMode ? "#1e3a6e" : "#EAF2FF",
-    accentHover: "#3A7BFF",
+    accentHover: "#0B4A7D",
   };
 
   const S = {
@@ -601,7 +658,7 @@ export default function App() {
 
   if (!authed) {
     return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0B5FFF 0%, #3A7BFF 50%, #EAF2FF 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif", padding: 16 }}>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #072E55 0%, #0B4A7D 55%, #DCEAF5 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', system-ui, sans-serif", padding: 16 }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`}</style>
         <div style={{ background: "#fff", borderRadius: 20, padding: "2.5rem", width: "100%", maxWidth: 420, boxShadow: "0 25px 60px rgba(11,95,255,0.25)", boxSizing: "border-box" }}>
           <div style={{ textAlign: "center", marginBottom: "2rem" }}>
@@ -621,7 +678,7 @@ export default function App() {
               <input style={S.input} type="password" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" onKeyDown={e => e.key === "Enter" && handleLogin()} />
             </div>
             {loginErr && <p style={{ color: "#DC2626", fontSize: 13, margin: 0 }}>{loginErr}</p>}
-            <button onClick={handleLogin} style={{ background: "#0B5FFF", color: "#fff", border: "none", padding: "11px 14px", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4 }}>
+            <button onClick={handleLogin} style={{ background: "#072E55", color: "#fff", border: "none", padding: "11px 14px", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4 }}>
               Sign In
             </button>
           </div>
@@ -688,8 +745,13 @@ export default function App() {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {view === "dashboard" && (
+              <button onClick={() => setShowClientModal(true)} style={{ ...S.btn("primary"), fontWeight: 600 }}>
+                <i className="ti ti-building-plus" /> Add Client
+              </button>
+            )}
             {view === "tracker" && !selectedReport && (
-              <button onClick={() => setShowAddModal(true)} style={{ ...S.btn("primary"), fontWeight: 600 }}>
+              <button onClick={() => setShowAddModal(true) style={{ ...S.btn("primary"), fontWeight: 600 }}>
                 <i className="ti ti-plus" /> Add Report
               </button>
             )}
@@ -717,6 +779,71 @@ export default function App() {
           {/* Dashboard */}
           {view === "dashboard" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Clients</h2>
+                    <p style={{ margin: "3px 0 0", fontSize: 12, color: C.textMuted }}>Manage clients and track their BI reports by status.</p>
+                  </div>
+                  <span style={{ fontSize: 12, color: C.textMuted }}>{clients.length} client{clients.length === 1 ? "" : "s"}</span>
+                </div>
+                {clients.length === 0 ? (
+                  <div style={{ ...S.card, textAlign: "center", padding: "2.2rem" }}>
+                    <i className="ti ti-building-community" style={{ fontSize: 34, color: C.accent }} />
+                    <p style={{ margin: "10px 0 4px", fontSize: 15, fontWeight: 600, color: C.text }}>No clients added yet</p>
+                    <p style={{ margin: "0 0 14px", fontSize: 12, color: C.textMuted }}>Add your first client to start assigning reports.</p>
+                    <button onClick={() => setShowClientModal(true)} style={S.btn("primary")}>+ Add Client</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 14 }}>
+                    {clients.map(client => {
+                      const clientReports = reports.filter(r => r.clientId === client.id);
+                      const statusCounts = STATUSES.map(st => ({ ...st, count: clientReports.filter(r => r.status === st.key).length })).filter(st => st.count > 0);
+                      return (
+                        <div key={client.id} style={{ ...S.card, padding: 0, overflow: "hidden", borderTop: `3px solid ${C.accent}` }}>
+                          <div style={{ padding: "15px 16px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                            <div style={{ display: "flex", gap: 11, alignItems: "center", minWidth: 0 }}>
+                              <div style={{ width: 40, height: 40, minWidth: 40, borderRadius: 10, background: C.accentBg, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+                                {client.name?.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{client.name}</p>
+                                <p style={{ margin: "3px 0 0", fontSize: 11, color: C.textMuted }}>{clientReports.length} report{clientReports.length === 1 ? "" : "s"}</p>
+                              </div>
+                            </div>
+                            <button onClick={() => { setFilterClient(client.id); setView("tracker"); setSelectedReport(null); }} style={{ ...S.btn(), padding: "5px 9px", fontSize: 11 }}>View Reports</button>
+                          </div>
+                          <div style={{ padding: "10px 16px 14px", borderTop: `1px solid ${C.border}` }}>
+                            {clientReports.length === 0 ? (
+                              <p style={{ margin: 0, color: C.textMuted, fontSize: 12 }}>No reports assigned to this client yet.</p>
+                            ) : (
+                              <>
+                                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 9 }}>
+                                  {statusCounts.map(st => (
+                                    <span key={st.key} style={{ fontSize: 10, padding: "3px 7px", borderRadius: 12, background: st.bg, color: st.text, border: `1px solid ${st.color}33`, fontWeight: 600 }}>
+                                      {st.label}: {st.count}
+                                    </span>
+                                  ))}
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                  {clientReports.slice(0, 3).map(r => (
+                                    <div key={r.id} onClick={() => { setSelectedReport(r); setView("tracker"); }} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 7, background: C.bg, cursor: "pointer" }}>
+                                      <span style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+                                      <StatusBadge statusKey={r.status} small />
+                                    </div>
+                                  ))}
+                                  {clientReports.length > 3 && <span style={{ fontSize: 10, color: C.textMuted }}>+{clientReports.length - 3} more report{clientReports.length - 3 === 1 ? "" : "s"}</span>}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
                 {[
                   { label: "Total Reports", value: stats.total, icon: "ti-file-description", color: C.accent, bg: "#EAF2FF" },
@@ -770,7 +897,7 @@ export default function App() {
                         <XAxis dataKey="module" tick={{ fontSize: 10, fill: C.textMuted }} />
                         <YAxis tick={{ fontSize: 10, fill: C.textMuted }} />
                         <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                        <Bar dataKey="count" fill="#0B5FFF" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="count" fill="#072E55" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -846,7 +973,7 @@ export default function App() {
                             <PriorityBadge priorityKey={r.priority} />
                             {pendingClar > 0 && <span style={{ fontSize: 11, background: "#FEF2F2", color: "#DC2626", padding: "2px 8px", borderRadius: 20, fontWeight: 600, border: "1px solid #FECACA" }}>⚠ {pendingClar} clarification{pendingClar > 1 ? "s" : ""}</span>}
                           </div>
-                          <p style={{ margin: 0, fontSize: 13, color: C.textMuted }}>{r.module} · {r.owner} · Updated {timeAgo(r.updatedAt)}</p>
+                          <p style={{ margin: 0, fontSize: 13, color: C.textMuted }}>{r.clientName || "Unassigned"} · {r.module} · {r.owner} · Updated {timeAgo(r.updatedAt)}</p>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
                           <span style={{ fontSize: 12, color: C.textMuted }}>{(r.remarks || []).length} remarks</span>
@@ -993,8 +1120,9 @@ export default function App() {
         </div>
       </div>
 
-      {showAddModal && <ReportForm title="Add New Report" onSave={handleAddReport} onCancel={() => setShowAddModal(false)} saving={saving} C={C} S={S} />}
-      {editingReport && <ReportForm title="Edit Report" initial={editingReport} onSave={handleEditReport} onCancel={() => setEditingReport(null)} saving={saving} C={C} S={S} />}
+      {showClientModal && <ClientForm onSave={handleAddClient} onCancel={() => setShowClientModal(false)} saving={clientSaving} C={C} S={S} />}
+      {showAddModal && <ReportForm title="Add New Report" onSave={handleAddReport} onCancel={() => setShowAddModal(false)} saving={saving} C={C} S={S} clients={clients} initial={filterClient !== "all" ? { clientId: filterClient } : undefined} />}
+      {editingReport && <ReportForm title="Edit Report" initial={editingReport} onSave={handleEditReport} onCancel={() => setEditingReport(null)} saving={saving} C={C} S={S} clients={clients} />}
     </div>
   );
 }
