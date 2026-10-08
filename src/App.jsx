@@ -4,6 +4,7 @@ import {
   doc, onSnapshot, serverTimestamp, orderBy, query
 } from "firebase/firestore";
 import { db } from "./firebase";
+import MyDay from "./MyDay";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
@@ -648,6 +649,7 @@ export default function App() {
   };
 
   const navItems = [
+    { key: "myday", icon: "ti-calendar-check", label: "My Day" },
     { key: "dashboard", icon: "ti-layout-dashboard", label: "Dashboard" },
     { key: "tracker", icon: "ti-report-analytics", label: "Report Tracker" },
     { key: "analytics", icon: "ti-chart-bar", label: "Analytics" },
@@ -664,7 +666,7 @@ export default function App() {
               <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #072E55, #0B5FFF)", color: "#fff" }}><i className="ti ti-chart-bar" style={{ fontSize: 30 }} /></div>
             </div>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "#0F172A" }}>Shreyas BI Space</h1>
-            <p style={{ margin: "6px 0 0", color: "#64748B", fontSize: 14 }}>Report Tracking & Documentation System</p>
+            <p style={{ margin: "6px 0 0", color: "#64748B", fontSize: 14 }}>AI-Powered BI Analyst Workspace</p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
@@ -680,7 +682,7 @@ export default function App() {
               Sign In
             </button>
           </div>
-          <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 12, color: "#94A3B8" }}>Personal BI Workspace</p>
+          <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: 12, color: "#94A3B8" }}>Personal BI Operating System</p>
         </div>
       </div>
     );
@@ -733,6 +735,7 @@ export default function App() {
         <div style={{ padding: "12px 24px", borderBottom: `1px solid ${C.border}`, background: C.surface, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10, boxShadow: "0 1px 6px rgba(11,95,255,0.06)" }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>
+              {view === "myday" && "My Day"}
               {view === "dashboard" && "Dashboard"}
               {view === "tracker" && (selectedReport ? selectedReport.name : "Report Tracker")}
               {view === "analytics" && "Analytics"}
@@ -743,6 +746,9 @@ export default function App() {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {view === "myday" && (
+              <button onClick={() => setView("tracker")} style={S.btn()}><i className="ti ti-report-analytics" /> Reports</button>
+            )}
             {view === "dashboard" && (
               <button onClick={() => setShowClientModal(true)} style={{ ...S.btn("primary"), fontWeight: 600 }}>
                 <i className="ti ti-building-plus" /> Add Client
@@ -773,6 +779,9 @@ export default function App() {
         </div>
 
         <div style={{ padding: 24, flex: 1 }}>
+
+          {/* My Day */}
+          {view === "myday" && <MyDay C={C} S={S} reports={reports} currentUser={currentUser} />}
 
           {/* Dashboard */}
           {view === "dashboard" && (

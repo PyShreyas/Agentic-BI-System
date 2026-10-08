@@ -1,0 +1,210 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp
+} from "firebase/firestore";
+import { db } from "./firebase";
+
+const TASK_STATUSES = [
+  { key:"todo", label:"To Do", color:"#64748B", bg:"#F1F5F9" },
+  { key:"in_progress", label:"In Progress", color:"#0B5FFF", bg:"#EAF2FF" },
+  { key:"blocked", label:"Blocked", color:"#DC2626", bg:"#FEF2F2" },
+  { key:"done", label:"Done", color:"#16A34A", bg:"#F0FDF4" },
+];
+
+const PRIORITIES = [
+  { key:"critical", label:"Critical", color:"#DC2626", bg:"#FEF2F2" },
+  { key:"high", label:"High", color:"#EA580C", bg:"#FFF7ED" },
+  { key:"medium", label:"Medium", color:"#D97706", bg:"#FEFCE8" },
+  { key:"low", label:"Low", color:"#16A34A", bg:"#F0FDF4" },
+];
+
+const badge = (item) => ({
+  display:"inline-block", padding:"3px 9px", borderRadius:20,
+  background:item.bg, color:item.color, fontSize:11, fontWeight:700,
+  border:`1px solid ${item.color}33`, whiteSpace:"nowrap"
+});
+
+function dateKey(d=new Date()) {
+  return new Date(d).toISOString().slice(0,10);
+}
+function niceDate(value) {
+  if (!value) return "—";
+  const d = value?.toDate ? value.toDate() : new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+}
+
+export default function MyDay({ C, S, reports, currentUser }) {
+  const [tasks,setTasks]=useState([]);
+  const [updates,setUpdates]=useState([]);
+  const [blockers,setBlockers]=useState([]);
+  const [showTask,setShowTask]=useState(false);
+  const [showBlocker,setShowBlocker]=useState(false);
+  const [task,setTask]=useState({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
+  const [blocker,setBlocker]=useState("");
+  const [dailyText,setDailyText]=useState("");
+
+  const today=dateKey();
+  useEffect(()=>onSnapshot(collection(db,"tasks"),s=>setTasks(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
+  useEffect(()=>onSnapshot(collection(db,"dailyUpdates"),s=>setUpdates(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
+  useEffect(()=>onSnapshot(collection(db,"blockers"),s=>setBlockers(s.docs.map(d=>({id:d.id,...d.data()})))),[]);
+
+  const todayUpdate=updates.find(x=>x.date===today);
+  useEffect(()=>{ if(todayUpdate) setDailyText(todayUpdate.text||""); },[todayUpdate?.id,todayUpdate?.text]);
+
+  const metrics=useMemo(()=>{
+    const completed=tasks.filter(t=>t.status==="done" && t.completedAt && dateKey(t.completedAt)===today).length;
+    const blocked=tasks.filter(t=>t.status==="blocked").length;
+    const overdue=tasks.filter(t=>t.status!=="done" && t.dueDate && t.dueDate<today).length;
+    const high=tasks.filter(t=>t.status!=="done" && ["critical","high"].includes(t.priority)).length;
+    return { completed,blocked,overdue,high };
+  },[tasks,today]);
+
+  const activeTasks=tasks.filter(t=>t.status!=="done" || t.dueDate===today);
+  const openBlockers=blockers.filter(b=>b.status!=="resolved");
+  const staleReports=reports.filter(r=>{
+    if(!r.updatedAt || r.status==="deployed_live") return false;
+    const d=r.updatedAt?.toDate ? r.updatedAt.toDate() : new Date(r.updatedAt);
+    return Date.now()-d.getTime()>3*86400000;
+  });
+
+  const createTask=async()=>{
+    if(!task.title.trim()) return;
+    await addDoc(collection(db,"tasks"),{
+      ...task,title:task.title.trim(),owner:currentUser,
+      createdDate:new Date().toISOString(),createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+    });
+    setTask({title:"",reportId:"",priority:"medium",status:"todo",dueDate:"",estimatedHours:""});
+    setShowTask(false);
+  };
+  const updateTask=async(id,data)=>{
+    await updateDoc(doc(db,"tasks",id),{...data,updatedAt:serverTimestamp()});
+  };
+  const removeTask=async(id)=>{
+    if(window.confirm("Delete this task?")) await deleteDoc(doc(db,"tasks",id));
+  };
+  const saveDaily=async()=>{
+    if(!dailyText.trim()) return;
+    if(todayUpdate) await updateDoc(doc(db,"dailyUpdates",todayUpdate.id),{text:dailyText.trim(),updatedAt:serverTimestamp(),updatedBy:currentUser});
+    else await addDoc(collection(db,"dailyUpdates"),{date:today,text:dailyText.trim(),createdAt:serverTimestamp(),updatedAt:serverTimestamp(),updatedBy:currentUser});
+  };
+  const createBlocker=async()=>{
+    if(!blocker.trim()) return;
+    await addDoc(collection(db,"blockers"),{title:blocker.trim(),status:"open",severity:"medium",createdBy:currentUser,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    setBlocker(""); setShowBlocker(false);
+  };
+  const resolveBlocker=async(id)=>updateDoc(doc(db,"blockers",id),{status:"resolved",resolvedBy:currentUser,resolvedAt:serverTimestamp(),updatedAt:serverTimestamp()});
+
+  const smartBrief = metrics.overdue || metrics.blocked || staleReports.length
+    ? `Attention needed: ${metrics.overdue} overdue task(s), ${metrics.blocked} blocked task(s) and ${staleReports.length} stale report(s).`
+    : "No urgent issues detected. Focus on your highest-value task and keep today's update current.";
+
+  return <div style={{display:"flex",flexDirection:"column",gap:18}}>
+    <div style={{...S.card,background:`linear-gradient(135deg,${C.accent} 0%,#0B5FFF 100%)`,border:"none",color:"#fff"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:14,flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,opacity:.72,textTransform:"uppercase",letterSpacing:".08em"}}>Personal BI Operating System</div>
+          <h2 style={{margin:"5px 0 3px",fontSize:25}}>My Day</h2>
+          <div style={{fontSize:13,opacity:.82}}>{new Date().toLocaleDateString("en-GB",{weekday:"long",day:"2-digit",month:"long",year:"numeric"})}</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setShowTask(true)} style={{...S.btn(),background:"#fff",color:C.accent,border:"none"}}><i className="ti ti-plus"/> New Task</button>
+          <button onClick={()=>setShowBlocker(true)} style={{...S.btn(),background:"#ffffff18",color:"#fff",border:"1px solid #ffffff55"}}><i className="ti ti-alert-triangle"/> Add Blocker</button>
+        </div>
+      </div>
+      <div style={{marginTop:16,padding:"12px 14px",borderRadius:10,background:"#ffffff16",border:"1px solid #ffffff25"}}>
+        <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",opacity:.72,marginBottom:4}}>Smart Daily Briefing</div>
+        <div style={{fontSize:14,lineHeight:1.5}}>{smartBrief}</div>
+      </div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12}}>
+      {[
+        ["Today's Tasks",activeTasks.length,"ti-list-check",C.accent],
+        ["Completed Today",metrics.completed,"ti-circle-check","#16A34A"],
+        ["Blocked",metrics.blocked,"ti-alert-triangle","#DC2626"],
+        ["Overdue",metrics.overdue,"ti-clock-exclamation","#EA580C"],
+        ["High Priority",metrics.high,"ti-flame","#D97706"]
+      ].map(([label,value,icon,color])=><div key={label} style={{...S.card,padding:"13px 15px",borderTop:`3px solid ${color}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:10,color:C.textMuted,fontWeight:700,textTransform:"uppercase"}}>{label}</span><i className={`ti ${icon}`} style={{color,fontSize:17}}/></div>
+        <div style={{fontSize:27,fontWeight:700,color:C.text,marginTop:5}}>{value}</div>
+      </div>)}
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(280px,1fr)",gap:16}}>
+      <div style={S.card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>Today's Work</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Tasks, deadlines and next actions</p></div>
+          <button onClick={()=>setShowTask(true)} style={S.btn("primary")}><i className="ti ti-plus"/> Task</button>
+        </div>
+        {activeTasks.length===0?<div style={{padding:28,textAlign:"center",color:C.textMuted,fontSize:13}}>No active tasks. Add your first task.</div>:
+          <div style={{display:"flex",flexDirection:"column",gap:7}}>
+            {activeTasks.slice(0,12).map(t=>{
+              const report=reports.find(r=>r.id===t.reportId);
+              const st=TASK_STATUSES.find(x=>x.key===t.status)||TASK_STATUSES[0];
+              const pr=PRIORITIES.find(x=>x.key===t.priority)||PRIORITIES[2];
+              return <div key={t.id} style={{padding:"10px 11px",border:`1px solid ${C.border}`,borderRadius:9,background:C.bg}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:650,color:C.text}}>{t.title}</span><span style={badge(st)}>{st.label}</span><span style={badge(pr)}>{pr.label}</span></div>
+                    <div style={{fontSize:11,color:C.textMuted,marginTop:5}}>{report?.name||"Unlinked task"}{t.dueDate?` · Due ${niceDate(t.dueDate)}`:""}{t.estimatedHours?` · ${t.estimatedHours}h est.`:""}</div>
+                  </div>
+                  <select value={t.status||"todo"} onChange={e=>updateTask(t.id,{status:e.target.value,...(e.target.value==="done"?{completedAt:new Date().toISOString()}:{})})} style={{...S.input,width:"auto",padding:"5px 8px",fontSize:11}}>
+                    {TASK_STATUSES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
+                  </select>
+                </div>
+                <div style={{display:"flex",justifyContent:"flex-end",marginTop:7}}><button onClick={()=>removeTask(t.id)} style={{...S.btn(),padding:"3px 8px",fontSize:10,color:"#DC2626"}}>Delete</button></div>
+              </div>;
+            })}
+          </div>}
+      </div>
+
+      <div style={S.card}>
+        <h3 style={{margin:"0 0 10px",fontSize:14,color:C.text}}>Action Center</h3>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {metrics.overdue>0 && <div style={{padding:"9px 10px",borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA",fontSize:12,color:"#991B1B"}}><b>{metrics.overdue}</b> overdue task(s) need attention.</div>}
+          {metrics.blocked>0 && <div style={{padding:"9px 10px",borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA",fontSize:12,color:"#991B1B"}}><b>{metrics.blocked}</b> task(s) are blocked.</div>}
+          {staleReports.slice(0,3).map(r=><div key={r.id} style={{padding:"9px 10px",borderRadius:8,background:"#FFF7ED",border:"1px solid #FED7AA",fontSize:12,color:"#9A3412"}}><b>Stale:</b> {r.name}</div>)}
+          {openBlockers.slice(0,3).map(b=><div key={b.id} style={{padding:"9px 10px",borderRadius:8,background:"#FFF7ED",border:"1px solid #FED7AA",fontSize:12,color:"#9A3412"}}><b>Blocker:</b> {b.title}</div>)}
+          {!metrics.overdue&&!metrics.blocked&&!staleReports.length&&!openBlockers.length&&<div style={{padding:18,textAlign:"center",color:"#16A34A",fontSize:12}}>✓ No urgent actions detected.</div>}
+        </div>
+      </div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,1fr)",gap:16}}>
+      <div style={S.card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div><h3 style={{margin:0,fontSize:14,color:C.text}}>Daily Update</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Capture completed work, blockers and tomorrow's plan.</p></div>
+          <button onClick={saveDaily} style={S.btn("primary")}>Save Update</button>
+        </div>
+        <textarea style={{...S.input,minHeight:145,resize:"vertical"}} value={dailyText} onChange={e=>setDailyText(e.target.value)} placeholder={"Completed:\n• ...\n\nIn Progress:\n• ...\n\nBlockers:\n• ...\n\nTomorrow:\n• ..."}/>
+        {todayUpdate&&<div style={{fontSize:10,color:C.textMuted,marginTop:6}}>Last saved by {todayUpdate.updatedBy||currentUser}</div>}
+      </div>
+
+      <div style={S.card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div><h3 style={{margin:0,fontSize:14,color:C.text}}>Open Blockers</h3><p style={{margin:"3px 0 0",fontSize:11,color:C.textMuted}}>Items preventing progress</p></div><button onClick={()=>setShowBlocker(true)} style={S.btn()}>+ Blocker</button></div>
+        {openBlockers.length===0?<div style={{padding:16,textAlign:"center",color:C.textMuted,fontSize:12}}>No open blockers.</div>:openBlockers.slice(0,6).map(b=><div key={b.id} style={{padding:"9px 10px",border:`1px solid ${C.border}`,borderRadius:8,marginBottom:6}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.text}}>{b.title}</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:5}}><span style={{fontSize:10,color:C.textMuted}}>Raised {niceDate(b.createdAt)}</span><button onClick={()=>resolveBlocker(b.id)} style={{...S.btn(),padding:"2px 7px",fontSize:10,color:"#16A34A"}}>Resolve</button></div>
+        </div>)}
+      </div>
+    </div>
+
+    {showTask&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&setShowTask(false)}><div style={S.modalContent}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h2 style={{margin:0,fontSize:17,color:C.text}}>New Daily Task</h2><button onClick={()=>setShowTask(false)} style={{background:"transparent",border:0,fontSize:22,cursor:"pointer",color:C.textMuted}}>×</button></div>
+      <label style={S.label}>Task *</label><input autoFocus style={S.input} value={task.title} onChange={e=>setTask({...task,title:e.target.value})} placeholder="e.g. Validate PO Sent Date logic"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12}}>
+        <div><label style={S.label}>Linked Report</label><select style={S.input} value={task.reportId} onChange={e=>setTask({...task,reportId:e.target.value})}><option value="">None</option>{reports.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
+        <div><label style={S.label}>Priority</label><select style={S.input} value={task.priority} onChange={e=>setTask({...task,priority:e.target.value})}>{PRIORITIES.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select></div>
+        <div><label style={S.label}>Due Date</label><input type="date" style={S.input} value={task.dueDate} onChange={e=>setTask({...task,dueDate:e.target.value})}/></div>
+        <div><label style={S.label}>Estimated Hours</label><input type="number" min="0" step="0.5" style={S.input} value={task.estimatedHours} onChange={e=>setTask({...task,estimatedHours:e.target.value})} placeholder="e.g. 2"/></div>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}><button onClick={()=>setShowTask(false)} style={S.btn()}>Cancel</button><button onClick={createTask} style={S.btn("primary")}>Create Task</button></div>
+    </div></div>}
+
+    {showBlocker&&<div style={S.modal} onClick={e=>e.target===e.currentTarget&&setShowBlocker(false)}><div style={S.modalContent}>
+      <h2 style={{margin:"0 0 14px",fontSize:17,color:C.text}}>Add Blocker</h2><label style={S.label}>Blocker *</label><textarea autoFocus style={{...S.input,minHeight:90}} value={blocker} onChange={e=>setBlocker(e.target.value)} placeholder="What is preventing progress?"/>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}><button onClick={()=>setShowBlocker(false)} style={S.btn()}>Cancel</button><button onClick={createBlocker} style={S.btn("primary")}>Save Blocker</button></div>
+    </div></div>}
+  </div>;
+}
