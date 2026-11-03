@@ -6,6 +6,7 @@ import {
 import { db } from "./firebase";
 import MyDay from "./MyDay";
 import AskMyBI from "./AskMyBI";
+import AgenticBIWorkflow from "./AgenticBIWorkflow";
 import History from "./History";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -653,6 +654,7 @@ export default function App() {
   const navItems = [
     { key: "myday", icon: "ti-calendar-check", label: "My Day" },
     { key: "askbi", icon: "ti-sparkles", label: "Ask My BI" },
+    { key: "agents", icon: "ti-hierarchy-3", label: "Agentic BI Workflow" },
     { key: "dashboard", icon: "ti-layout-dashboard", label: "Dashboard" },
     { key: "tracker", icon: "ti-report-analytics", label: "Report Tracker" },
     { key: "analytics", icon: "ti-chart-bar", label: "Analytics" },
@@ -741,6 +743,7 @@ export default function App() {
             <h1 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>
               {view === "myday" && "My Day"}
               {view === "askbi" && "Ask My BI"}
+              {view === "agents" && "Agentic BI Workflow"}
               {view === "dashboard" && "Dashboard"}
               {view === "tracker" && (selectedReport ? selectedReport.name : "Report Tracker")}
               {view === "analytics" && "Analytics"}
@@ -791,6 +794,9 @@ export default function App() {
 
           {/* Ask My BI */}
           {view === "askbi" && <AskMyBI C={C} S={S} reports={reports} currentUser={currentUser} />}
+
+          {/* Agentic BI Workflow */}
+          {view === "agents" && <AgenticBIWorkflow C={C} S={S} /> }
 
           {/* Task History */}
           {view === "history" && <History C={C} S={S} reports={reports} currentUser={currentUser} />}
