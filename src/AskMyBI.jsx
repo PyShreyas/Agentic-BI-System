@@ -402,9 +402,42 @@ function routeAgents(prompt, reports = [], tasks = []) {
   return { routes: routes.sort((a, b) => b.confidence - a.confidence), entity };
 }
 
+function buildWorkflowPlan(routes) {
+  const stepOrder = {
+    myDay: 1, overdue: 2, blocked: 3, workload: 4,
+    reportSearch: 5, reportAttention: 6, staleReports: 7,
+    qa: 8, docStandup: 9, developerNotes: 10, uatUpdate: 11, workSummary: 12
+  };
+  const descriptions = {
+    myDay: "Review priorities, due dates and today's workload",
+    overdue: "Identify overdue tasks and deadlines",
+    blocked: "Identify blocked work and dependencies",
+    workload: "Summarize active tasks and workload",
+    reportSearch: "Retrieve matching BI reports and current status",
+    reportAttention: "Identify reports requiring attention",
+    staleReports: "Check report freshness and stale items",
+    qa: "Run data completeness and release-readiness checks",
+    docStandup: "Prepare a stand-up update from tracker data",
+    developerNotes: "Prepare technical notes from report context",
+    uatUpdate: "Summarize Client UAT status and risks",
+    workSummary: "Prepare a consolidated BI work summary"
+  };
+  return [...routes]
+    .sort((a, b) => (stepOrder[a.intent] ?? 99) - (stepOrder[b.intent] ?? 99))
+    .slice(0, 5)
+    .map((route, index) => ({
+      number: index + 1,
+      agent: route.agent,
+      description: descriptions[route.intent] || `Process the ${route.intent} request`,
+      mode: "Read-only"
+    }));
+}
+
 function buildOrchestratedAnswer(orchestration, tasks, reports, prompt) {
   const { routes, entity } = orchestration;
   if (!routes.length) return null;
+  const plan = buildWorkflowPlan(routes);
+  const planText = plan.map(step => `${step.number}. ${step.agent} — ${step.description} [${step.mode}]`).join("\n");
   const sections = routes.slice(0, 5).map(route => {
     const answer = buildAnswer(route.intent, tasks, reports, prompt);
     return `[${route.agent} · ${Math.round(route.confidence * 100)}%]\n${answer}`;
@@ -416,7 +449,7 @@ function buildOrchestratedAnswer(orchestration, tasks, reports, prompt) {
   if (routes.some(r => r.intent === "myDay")) nextActions.push("Start with the highest-priority actionable item.");
   if (routes.some(r => ["developerNotes", "uatUpdate", "docStandup", "workSummary"].includes(r.intent))) nextActions.push("Copy the generated documentation into the relevant update, ticket or report notes.");
   const entityLine = [entity.client ? `Client: ${entity.client}` : "", entity.module ? `Module: ${entity.module}` : "", entity.report?.name ? `Report: ${entity.report.name}` : "", entity.task?.title ? `Task: ${entity.task.title}` : ""].filter(Boolean).join(" · ");
-  return `BI ORCHESTRATOR\n\nRouted to: ${routes.slice(0, 5).map(r => r.agent).join(" + ")}${entityLine ? `\nContext: ${entityLine}` : ""}\n\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the findings and choose the next action."}`;
+  return `BI ORCHESTRATOR\n\nPROPOSED WORKFLOW PLAN\n${planText}\n\nExecution policy: These steps only read tracker data and generate findings. Any task creation, update or archive action is presented separately and requires your explicit approval before it is written.\n\nRouted to: ${routes.slice(0, 5).map(r => r.agent).join(" + ")}${entityLine ? `\nContext: ${entityLine}` : ""}\n\nRESULTS\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the findings and choose the next action."}`;
 }
 function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   const today = dateKey();
