@@ -51,6 +51,55 @@ function validateRuleConfiguration(rule, headers) {
   return "";
 }
 
+
+function buildProfileRuleSuggestions(profile) {
+  if (!profile || !Array.isArray(profile.columns)) return [];
+  const suggestions = [];
+  profile.columns.forEach(column => {
+    if (column.nullCount > 0) {
+      suggestions.push({
+        key: "required::" + column.columnName,
+        name: "Required · " + column.columnName,
+        type: "required",
+        column: column.columnName,
+        severity: "warning",
+        enabled: true,
+        rationale: column.nullCount + " blank value(s) found (" + column.nullPercentage + "% of rows). Confirm whether this field is mandatory.",
+        allowedValues: []
+      });
+    }
+    if (profile.candidateKeys.includes(column.columnName)) {
+      suggestions.push({
+        key: "unique::" + column.columnName,
+        name: "Unique candidate key · " + column.columnName,
+        type: "unique",
+        column: column.columnName,
+        severity: "warning",
+        enabled: true,
+        rationale: "This column is currently unique and non-blank. Add a guard to detect future duplicates; confirm the business grain first.",
+        allowedValues: []
+      });
+    }
+    if ((column.dataType === "text" || column.dataType === "boolean") &&
+        column.distinctCount >= 2 && column.distinctCount <= 12 &&
+        column.topValues.length === column.distinctCount) {
+      suggestions.push({
+        key: "allowedValues::" + column.columnName,
+        name: "Observed categories · " + column.columnName,
+        type: "allowedValues",
+        column: column.columnName,
+        severity: "warning",
+        enabled: true,
+        caseInsensitive: true,
+        allowBlank: column.nullCount > 0,
+        allowedValues: column.topValues.map(item => item.value),
+        rationale: "The profile found " + column.distinctCount + " distinct value(s). Treat this observed list as a starting point and verify it against an approved reference list."
+      });
+    }
+  });
+  return suggestions;
+}
+
 function validateDatasetRules(dataset, rules) {
   if (!dataset || !Array.isArray(dataset.records) || !Array.isArray(dataset.headers)) {
     throw new Error("A valid parsed CSV dataset is required.");
@@ -212,6 +261,7 @@ function buildValidationSummaryCsv(result) {
 
 export {
   RULE_TYPES,
+  buildProfileRuleSuggestions,
   validateRuleConfiguration,
   validateDatasetRules,
   buildValidationIssuesCsv,
