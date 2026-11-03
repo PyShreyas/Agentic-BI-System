@@ -71,9 +71,20 @@ function describeAdvancedQuery(sql) {
     ctes.push({ name: match[1], line: lineAt(masked, match.index) });
   }
 
+  const cteBodyRanges = [...masked.matchAll(ctePattern)].map(match => {
+    const openIndex = match.index + match[0].lastIndexOf("(");
+    let depth = 1;
+    let closeIndex = openIndex + 1;
+    while (closeIndex < masked.length && depth > 0) {
+      if (masked[closeIndex] === "(") depth += 1;
+      else if (masked[closeIndex] === ")") depth -= 1;
+      closeIndex += 1;
+    }
+    return { start: openIndex, end: closeIndex, bodyDepth: 1 };
+  });
   const selectScopes = findSelectScopes(masked);
   const nestedQueries = selectScopes
-    .filter(scope => scope.depth > 0)
+    .filter(scope => scope.depth > 0 && !cteBodyRanges.some(range => scope.index > range.start && scope.index < range.end && scope.depth === range.bodyDepth))
     .map((scope, index) => {
       const before = masked.slice(Math.max(0, scope.index - 180), scope.index).toUpperCase();
       let location = "nested query";
