@@ -42,7 +42,7 @@ py -3.11 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --env-file .env --reload
 ```
 
 If activation is blocked by PowerShell policy, run this for the current terminal only, then activate again:
