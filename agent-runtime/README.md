@@ -29,7 +29,7 @@ If PowerShell blocks activation, use `.venv\Scripts\python.exe` directly or run 
 Keep Ollama running, then:
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --env-file .env --reload
 ```
 
 Open:
