@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { readProfileCsvFile } from "./dataProfiling";
+import { profileDataset, readProfileCsvFile } from "./dataProfiling";
 import {
   RULE_TYPES,
   validateRuleConfiguration,
   validateDatasetRules,
   buildValidationIssuesCsv,
-  buildValidationSummaryCsv
+  buildValidationSummaryCsv,
+  buildProfileRuleSuggestions
 } from "./dataQualityRules";
 
 const STORAGE_KEY = "agenticBi.dataQualityRules.v1";
@@ -64,7 +65,7 @@ function IssueTable({ issues, C }) {
 }
 
 export default function DataQualityRulesWorkspace({ C }) {
-  const [dataset, setDataset] = useState(null);
+  const [dataset, setDataset] = useState(null);\n  const [profile, setProfile] = useState(null);
   const [rules, setRules] = useState([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [result, setResult] = useState(null);
@@ -121,7 +122,7 @@ export default function DataQualityRulesWorkspace({ C }) {
       setDataset(parsed);
       setDraft(previous => ({ ...previous, column: parsed.headers[0] || "", compareColumn: parsed.headers[1] || parsed.headers[0] || "" }));
     } catch (loadError) {
-      setError(loadError.message || "Unable to read this CSV file.");
+      setProfile(null);\n      setDataset(null);\n      setError(loadError.message || "Unable to read this CSV file.");
     } finally {
       setBusy(false);
     }
@@ -184,6 +185,34 @@ export default function DataQualityRulesWorkspace({ C }) {
   };
 
   const filteredResults = result?.ruleResults.filter(item => filter === "all" || item.severity === filter) || [];
+  const profileSuggestions = useMemo(() => buildProfileRuleSuggestions(profile), [profile]);
+  const addProfileSuggestion = suggestion => {
+    const alreadyExists = rules.some(rule => rule.type === suggestion.type && rule.column === suggestion.column);
+    if (alreadyExists) {
+      setError("A " + suggestion.type + " rule already exists for " + suggestion.column + ".");
+      return;
+    }
+    const { key, rationale, ...ruleConfig } = suggestion;
+    setRules(previous => [...previous, {
+      ...ruleConfig,
+      id: "profile-rule-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+      profileRationale: rationale
+    }]);
+    setResult(null);
+    setError("");
+  };
+  const addAllProfileSuggestions = () => {
+    const existing = new Set(rules.map(rule => rule.type + "::" + rule.column));
+    const additions = profileSuggestions.filter(item => !existing.has(item.type + "::" + item.column));
+    setRules(previous => [...previous, ...additions.map(({ key, rationale, ...ruleConfig }) => ({
+      ...ruleConfig,
+      id: "profile-rule-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+      profileRationale: rationale
+    }))]);
+    setResult(null);
+    setError("");
+  };
+
 
   return <div style={{ display: "grid", gap: 14 }}>
     <section style={panel(C)}>
@@ -205,7 +234,24 @@ export default function DataQualityRulesWorkspace({ C }) {
         <div><strong style={{ fontSize: 13 }}>Rule builder</strong><p style={{ ...muted(C), margin: "3px 0 0" }}>Add checks that represent your business expectations.</p></div>
         <button onClick={addRecommendedRules} style={{ padding: "8px 11px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Add required rule for every column</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 9, marginTop: 12 }}>
+
+      {profile && <div style={{ marginTop: 14, padding: 12, border: "1px solid " + C.border, borderRadius: 9, background: C.surface }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div><strong style={{ fontSize: 12 }}>Profile-informed rule suggestions</strong><p style={{ ...muted(C), margin: "3px 0 0" }}>Based on missing values, candidate keys and low-cardinality categories. Review each suggestion before adding it.</p></div>
+          <button onClick={addAllProfileSuggestions} disabled={!profileSuggestions.some(item => !rules.some(rule => rule.type === item.type && rule.column === item.column))} style={{ padding: "7px 10px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Add all new suggestions</button>
+        </div>
+        {profileSuggestions.length ? <div style={{ display: "grid", gap: 7, marginTop: 10 }}>
+          {profileSuggestions.map(item => {
+            const exists = rules.some(rule => rule.type === item.type && rule.column === item.column);
+            return <div key={item.key} style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", border: "1px solid " + C.border, borderRadius: 8, padding: 9 }}>
+              <div style={{ flex: 1, minWidth: 190 }}><strong style={{ fontSize: 11 }}>{item.name}</strong><p style={{ ...muted(C), margin: "3px 0 0" }}>{item.rationale}</p></div>
+              <button disabled={exists} onClick={() => addProfileSuggestion(item)} style={{ padding: "6px 9px", border: "1px solid " + C.border, borderRadius: 6, background: C.surface, color: C.text, cursor: exists ? "default" : "pointer", fontSize: 10, opacity: exists ? .5 : 1 }}>{exists ? "Already added" : "Add draft rule"}</button>
+            </div>;
+          })}
+        </div> : <p style={muted(C)}>No profile-based suggestions for this dataset. You can still create rules manually.</p>}
+        <p style={{ ...muted(C), margin: "9px 0 0" }}>These are heuristic drafts, not approved business rules. Observed categories may be incomplete, and candidate-key uniqueness must be confirmed with the data owner.</p>
+      </div>}
+\n      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 9, marginTop: 12 }}>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Rule name<input value={draft.name} onChange={event => updateDraft("name", event.target.value)} placeholder="e.g. Cost must be positive" style={field(C)} /></label>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Rule type<select value={draft.type} onChange={event => updateDraft("type", event.target.value)} style={field(C)}>{RULE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Target column<select value={draft.column} onChange={event => updateDraft("column", event.target.value)} style={field(C)}>{dataset.headers.map(header => <option key={header} value={header}>{header}</option>)}</select></label>
