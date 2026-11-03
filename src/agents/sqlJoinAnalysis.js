@@ -1,5 +1,4 @@
 const identifier = "(?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)";
-const objectPattern = new RegExp(identifier + "(?:\\s*\\.\\s*" + identifier + "){0,2}", "g");
 
 function cleanSql(sql) {
   return sql
@@ -24,7 +23,7 @@ function analyzeSqlJoins(sql) {
   }
 
   const joins = [];
-  const joinPattern = /\\b((?:INNER|LEFT(?:\\s+OUTER)?|RIGHT(?:\\s+OUTER)?|FULL(?:\\s+OUTER)?|CROSS)?\\s*JOIN)\\s+((?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)(?:\\s*\\.\\s*(?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)){0,2})(?:\\s+(?:AS\\s+)?((?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)))?(?:\\s+ON\\s+([\\s\\S]*?))?(?=\\b(?:(?:INNER|LEFT|RIGHT|FULL|CROSS)\\s+)?JOIN\\b|\\bWHERE\\b|\\bGROUP\\s+BY\\b|\\bHAVING\\b|\\bORDER\\s+BY\\b|\\bUNION\\b|;|$)/gi;
+  const joinPattern = /\\b((?:INNER|LEFT(?:\\s+OUTER)?|RIGHT(?:\\s+OUTER)?|FULL(?:\\s+OUTER)?|CROSS)?\\s*JOIN)\\s+((?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)(?:\\s*\\.\\s*(?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)){0,2})(?:\\s+(?:AS\\s+)?(?!ON\\b|WHERE\\b|GROUP\\b|ORDER\\b|HAVING\\b|UNION\\b)((?:\\[[^\\]]+\\]|[A-Za-z_][\\w$#]*)))?(?:\\s+ON\\s+([\\s\\S]*?))?(?=\\b(?:(?:INNER|LEFT|RIGHT|FULL|CROSS)\\s+)?JOIN\\b|\\bWHERE\\b|\\bGROUP\\s+BY\\b|\\bHAVING\\b|\\bORDER\\s+BY\\b|\\bUNION\\b|;|$)/gi;
   for (const match of normalized.matchAll(joinPattern)) {
     const joinType = match[1].replace(/\\s+/g, " ").trim().toUpperCase();
     const object = match[2].replace(/\\s+/g, "");
