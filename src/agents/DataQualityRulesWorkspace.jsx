@@ -9,6 +9,7 @@ import {
 } from "./dataQualityRules";
 
 const STORAGE_KEY = "agenticBi.dataQualityRules.v1";
+const HISTORY_KEY = "agenticBi.dataQualityHistory.v1";
 const panel = C => ({ background: C.bg, border: "1px solid " + C.border, borderRadius: 10, padding: 14 });
 const muted = C => ({ color: C.textMuted, fontSize: 12, lineHeight: 1.6 });
 const field = C => ({ width: "100%", boxSizing: "border-box", padding: 9, borderRadius: 8, border: "1px solid " + C.border, background: C.surface, color: C.text, font: "inherit", minWidth: 0 });
@@ -70,6 +71,7 @@ export default function DataQualityRulesWorkspace({ C }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     try {
@@ -87,6 +89,24 @@ export default function DataQualityRulesWorkspace({ C }) {
       // The rule editor remains usable when browser storage is unavailable.
     }
   }, [rules]);
+
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      if (Array.isArray(saved)) setHistory(saved);
+    } catch { setHistory([]); }
+  }, []);
+
+  useEffect(() => {
+    if (!result) return;
+    const snapshot = { fileName: result.fileName, timestamp: new Date().toISOString(), qualityPercentage: result.qualityPercentage, errors: result.errors, warnings: result.warnings, failed: result.failed, rowCount: result.rowCount };
+    setHistory(previous => {
+      const next = [snapshot, ...previous].slice(0, 100);
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch { /* Optional local history. */ }
+      return next;
+    });
+  }, [result]);
 
   const updateDraft = (key, value) => setDraft(previous => ({ ...previous, [key]: value }));
   const visibleIssues = useMemo(() => (result?.issues || []).filter(issue => filter === "all" || issue.severity === filter), [result, filter]);
@@ -238,6 +258,41 @@ export default function DataQualityRulesWorkspace({ C }) {
         <Metric C={C} label="Failed checks" value={result.failed} tone={result.failed ? "#D64550" : "#0D9B3A"} />
         <Metric C={C} label="Errors" value={result.errors} tone={result.errors ? "#D64550" : "#0D9B3A"} />
         <Metric C={C} label="Warnings" value={result.warnings} tone={result.warnings ? "#C47A12" : "#0D9B3A"} />
+      </section>
+
+      <section style={panel(C)}>
+        <strong style={{ fontSize: 14 }}>Data quality dashboard</strong>
+        <p style={muted(C)}>Executive overview, issue prioritisation and local run history for {result.fileName}.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 9 }}>
+          <Metric C={C} label="Quality score" value={result.qualityPercentage + "%"} tone={result.qualityPercentage >= 95 ? "#0D9B3A" : result.qualityPercentage >= 85 ? "#C47A12" : "#D64550"} />
+          <Metric C={C} label="Rows flagged" value={new Set(result.issues.map(issue => issue.rowNumber)).size} />
+          <Metric C={C} label="Critical errors" value={result.errors} tone="#D64550" />
+          <Metric C={C} label="Warnings" value={result.warnings} tone="#C47A12" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginTop: 12 }}>
+          <div>
+            <strong style={{ fontSize: 12 }}>Recommended actions</strong>
+            {[...result.ruleResults].filter(item => item.failed > 0).sort((a, b) => (b.severity === "error") - (a.severity === "error") || b.failed - a.failed).slice(0, 5).map(item => {
+              const advice = item.type === "required" ? "Review source completeness and make the field mandatory where appropriate." : item.type === "unique" ? "Investigate duplicate business keys and confirm the expected data grain." : item.type === "allowedValues" ? "Align category values with the approved reference list." : item.type === "numericRange" ? "Check units, sign conventions and source calculations." : item.type === "dateRange" ? "Verify date format and the allowed reporting period." : "Confirm the expected relationship and comparison between these columns.";
+              return <div key={item.ruleId} style={{ border: "1px solid " + C.border, borderRadius: 8, padding: 9, marginTop: 7 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong style={{ fontSize: 11 }}>{item.ruleName}</strong><span style={{ color: item.severity === "error" ? "#D64550" : "#C47A12", fontSize: 10 }}>{item.failed} failed</span></div>
+                <p style={{ ...muted(C), margin: "4px 0 0" }}>{advice}</p>
+              </div>;
+            })}
+            {!result.ruleResults.some(item => item.failed > 0) && <p style={muted(C)}>No failed checks. Continue periodic validation.</p>}
+          </div>
+          <div>
+            <strong style={{ fontSize: 12 }}>Quality history</strong>
+            <p style={muted(C)}>Previous runs for this filename, saved locally.</p>
+            <div style={{ display: "flex", alignItems: "end", gap: 6, height: 105 }}>
+              {history.filter(item => item.fileName === result.fileName).slice(0, 7).reverse().map((item, index) => <div key={item.timestamp + index} title={item.timestamp} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "end", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 9 }}>{item.qualityPercentage}%</span><div style={{ width: "100%", height: Math.max(4, item.qualityPercentage) + "%", background: item.qualityPercentage >= 95 ? "#0D9B3A" : item.qualityPercentage >= 85 ? "#C47A12" : "#D64550", borderRadius: "4px 4px 0 0" }} />
+              </div>)}
+              <div style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "end", alignItems: "center", gap: 3 }}><span style={{ fontSize: 9 }}>{result.qualityPercentage}%</span><div style={{ width: "100%", height: Math.max(4, result.qualityPercentage) + "%", background: C.accent, borderRadius: "4px 4px 0 0" }} /></div>
+            </div>
+            <p style={muted(C)}>{history.filter(item => item.fileName === result.fileName).length} previous run(s). At least two runs are needed to interpret a trend.</p>
+          </div>
+        </div>
       </section>
       <section style={panel(C)}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
