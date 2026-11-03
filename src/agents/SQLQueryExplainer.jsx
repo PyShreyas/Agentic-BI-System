@@ -39,6 +39,23 @@ SELECT Vessel_Id, TotalOrders
 FROM VesselTotals
 WHERE TotalOrders >= 5
 ORDER BY TotalOrders DESC;`,
+  "Window function ranking": \`SELECT
+    Vessel_Id,
+    PurchaseOrder_Id,
+    ROW_NUMBER() OVER (
+      PARTITION BY Vessel_Id
+      ORDER BY Created_Date DESC
+    ) AS LatestOrderRank,
+    SUM(Amount) OVER (PARTITION BY Vessel_Id) AS VesselSpend
+FROM dbo.PurchaseOrders;\`,
+  "Nested subquery": \`SELECT Vessel_Id, Vessel_Name
+FROM dbo.Vessels AS v
+WHERE EXISTS (
+    SELECT 1
+    FROM dbo.PurchaseOrders AS po
+    WHERE po.Vessel_Id = v.Vessel_Id
+      AND po.Created_Date >= '2026-01-01'
+);\`,
 };
 
 const clauseDefinitions = [
