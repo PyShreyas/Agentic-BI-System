@@ -261,6 +261,18 @@ Perform approved changes through controlled tools.
 
 The objective is to automate repetitive work while keeping important decisions under user control.
 
+## Phase 1 — Local AI Foundation
+
+The `phase1/local-ai-foundation` development branch introduces a local FastAPI gateway for Ollama and a Local AI Runtime status/model test panel inside Ask My BI.
+
+- Local inference through Ollama; no hosted AI inference API is required.
+- Initial model target: `qwen3.5:4b`, with `qwen3.5:2b` as a lightweight alternative.
+- FastAPI endpoints: `/health`, `/models`, and `/chat`.
+- The runtime binds to `127.0.0.1` and is not intended to be publicly exposed.
+- The existing deterministic agents remain unchanged; this phase verifies local model connectivity rather than replacing the current orchestrator.
+
+See [Phase 1 setup instructions](docs/PHASE1_LOCAL_AI_SETUP.md).
+
 ## Roadmap
 
 Potential next stages:
