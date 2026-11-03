@@ -19,18 +19,47 @@ export default function SQLAgentWorkspace({ C }) {
   const [explanation, setExplanation] = useState("");
   const [schemaCatalog, setSchemaCatalog] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[]}');
-      return saved && Array.isArray(saved.tables) ? saved.tables : [];
-    } catch { return []; }
+      const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[],"relationships":[]}');
+      return saved && Array.isArray(saved.tables) ? saved : { tables: [], relationships: [] };
+    } catch { return { tables: [], relationships: [] }; }
   });
   const [selectedCatalogObjectId, setSelectedCatalogObjectId] = useState("");
   const [selectedColumnNames, setSelectedColumnNames] = useState([]);
-  const selectedCatalogObject = schemaCatalog.find(item => item.id === selectedCatalogObjectId);
-  const catalogObjectOptions = useMemo(() => schemaCatalog.map(item => ({ id: item.id, label: item.schemaName + "." + item.objectName })), [schemaCatalog]);
+  const catalogTables = schemaCatalog.tables || [];
+  const catalogRelationships = schemaCatalog.relationships || [];
+  const selectedCatalogObject = catalogTables.find(item => item.id === selectedCatalogObjectId);
+  const catalogObjectOptions = useMemo(() => catalogTables.map(item => ({ id: item.id, label: item.schemaName + "." + item.objectName })), [catalogTables]);
+
+  const getRelationshipSuggestions = index => {
+    const target = tables[index];
+    if (!target) return [];
+    const targetObject = catalogTables.find(item => item.schemaName === target.schema && item.objectName === target.name);
+    if (!targetObject) return [];
+    return tables.slice(0, index).flatMap((source, sourceOffset) => {
+      const sourceObject = catalogTables.find(item => item.schemaName === source.schema && item.objectName === source.name);
+      if (!sourceObject) return [];
+      return catalogRelationships.flatMap(relationship => {
+        if (relationship.fromObjectId === sourceObject.id && relationship.toObjectId === targetObject.id) {
+          return [{ id: relationship.id, expression: source.alias + "." + quoteIdentifier(relationship.fromColumn) + " = " + target.alias + "." + quoteIdentifier(relationship.toColumn), sourceAlias: source.alias, targetAlias: target.alias, cardinality: relationship.relationshipType }];
+        }
+        if (relationship.fromObjectId === targetObject.id && relationship.toObjectId === sourceObject.id) {
+          return [{ id: relationship.id, expression: source.alias + "." + quoteIdentifier(relationship.toColumn) + " = " + target.alias + "." + quoteIdentifier(relationship.fromColumn), sourceAlias: source.alias, targetAlias: target.alias, cardinality: relationship.relationshipType }];
+        }
+        return [];
+      });
+    });
+  };
+
+  const applyRelationshipSuggestion = (index, expression) => {
+    updateTable(index, "joinCondition", expression);
+    setFeedback("Registered relationship suggestion added to JOIN ON. Review the columns and join type before generating SQL.");
+  };
   useEffect(() => {
     const refreshCatalog = () => {
-      try { const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[]}'); setSchemaCatalog(saved && Array.isArray(saved.tables) ? saved.tables : []); }
-      catch { setSchemaCatalog([]); }
+      try {
+        const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[],"relationships":[]}');
+        setSchemaCatalog(saved && Array.isArray(saved.tables) ? saved : { tables: [], relationships: [] });
+      } catch { setSchemaCatalog({ tables: [], relationships: [] }); }
     };
     window.addEventListener("storage", refreshCatalog);
     return () => window.removeEventListener("storage", refreshCatalog);
@@ -48,7 +77,7 @@ export default function SQLAgentWorkspace({ C }) {
   const removeTable = index => setTables(current => current.filter((_, i) => i !== index));
 
   const applyCatalogObject = (index, objectId) => {
-    const object = schemaCatalog.find(item => item.id === objectId);
+    const object = catalogTables.find(item => item.id === objectId);
     if (!object) return;
     updateTable(index, "schema", object.schemaName);
     updateTable(index, "name", object.objectName);
@@ -153,7 +182,21 @@ export default function SQLAgentWorkspace({ C }) {
                 <label style={fieldLabel}>Table / view<input value={table.name} onChange={e => updateTable(index, "name", e.target.value)} style={fieldStyle} placeholder="YourTableOrView" /></label>
                 <label style={fieldLabel}>Alias<input value={table.alias} onChange={e => updateTable(index, "alias", e.target.value)} style={fieldStyle} /></label>
               </div>
-              {index > 0 && <label style={fieldLabel}>JOIN ON condition<input value={table.joinCondition} onChange={e => updateTable(index, "joinCondition", e.target.value)} style={fieldStyle} placeholder="t1.Vessel_Id = t2.Vessel_Id" /></label>}
+              {index > 0 && <>
+                <label style={fieldLabel}>JOIN ON condition<input value={table.joinCondition} onChange={e => updateTable(index, "joinCondition", e.target.value)} style={fieldStyle} placeholder="t1.Vessel_Id = t2.Vessel_Id" /></label>
+                {(() => {
+                  const suggestions = getRelationshipSuggestions(index);
+                  return suggestions.length > 0 ? <div style={{ display: "grid", gap: 6, padding: 9, borderRadius: 7, border: "1px dashed " + C.border, background: C.surface }}>
+                    <strong style={{ fontSize: 11 }}>Registered relationship suggestions</strong>
+                    <span style={{ color: C.textMuted, fontSize: 10 }}>Based only on relationships manually registered in Schema Explorer. Nothing is inserted until you choose it.</span>
+                    {suggestions.map(suggestion => <div key={suggestion.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <code style={{ fontSize: 10, overflowWrap: "anywhere", flex: 1 }}>{suggestion.expression}</code>
+                      <span style={{ color: C.textMuted, fontSize: 10 }}>{suggestion.cardinality}</span>
+                      <button onClick={() => applyRelationshipSuggestion(index, suggestion.expression)} style={{ padding: "6px 8px", border: "1px solid " + C.border, borderRadius: 6, background: C.bg, color: C.text, cursor: "pointer", fontSize: 10 }}>Use suggestion</button>
+                    </div>)}
+                  </div> : <span style={{ color: C.textMuted, fontSize: 10 }}>No registered relationship found between this source and the preceding selected sources. Enter the ON condition manually; no join keys are inferred.</span>;
+                })()}
+              </>}
             </div>
           ))}
         </div>
