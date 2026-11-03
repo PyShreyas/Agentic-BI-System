@@ -452,7 +452,7 @@ function summarizeWorkflowFinding(step, answer) {
 function formatPriorWorkflowFindings(memory) {
   if (!memory?.findings?.length) return "";
   return memory.findings.slice(-4)
-    .map(item => \`[\${item.agent} · \${item.intent}] \${item.summary}\`)
+    .map(item => `[${item.agent} · ${item.intent}] ${item.summary}`)
     .join("\n");
 }
 
@@ -472,10 +472,10 @@ async function executeWorkflowPlan(routes, tasks, reports, prompt, entity, onSte
       });
       memory.findings.push(summarizeWorkflowFinding(step, answer));
       memory.completedSteps.push({ number: step.number, intent: step.intent, agent: step.agent });
-      results.push(\`[\${step.agent} · \${Math.round((route?.confidence || 0) * 100)}%]\n\${answer}\`);
+      results.push(`[${step.agent} · ${Math.round((route?.confidence || 0) * 100)}%]\n${answer}`);
       onStepUpdate(step.number, "Completed");
     } catch (error) {
-      results.push(\`[\${step.agent}] Execution failed: \${error.message || "Unexpected error"}\`);
+      results.push(`[${step.agent}] Execution failed: ${error.message || "Unexpected error"}`);
       onStepUpdate(step.number, "Failed");
     }
     await new Promise(resolve => setTimeout(resolve, 120));
@@ -503,7 +503,7 @@ function buildOrchestratedAnswer(orchestration, tasks, reports, prompt, executed
 }
 function buildAnswer(intent, tasks, reports, promptForAgent = "", workflowContext = null) {
   const sharedContextPrompt = workflowContext?.priorFindings
-    ? \`\${promptForAgent}\n\nPrior agent findings (request-scoped context):\n\${workflowContext.priorFindings}\`
+    ? `${promptForAgent}\n\nPrior agent findings (request-scoped context):\n${workflowContext.priorFindings}`
     : promptForAgent;
   const today = dateKey();
   const tomorrow = addDaysKey(1);
