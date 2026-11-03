@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { describeAdvancedQuery } from "./sqlQueryAnalysis";
 
 const fieldStyle = {
   width: "100%",
@@ -99,7 +100,7 @@ export default function SQLQueryExplainer({ C }) {
   const [query, setQuery] = useState("");
   const [selectedExample, setSelectedExample] = useState("");
   const [hasExplained, setHasExplained] = useState(false);
-  const result = useMemo(() => hasExplained && query.trim() ? describeQuery(query) : null, [hasExplained, query]);
+  const result = useMemo(() => hasExplained && query.trim() ? { ...describeQuery(query), advanced: describeAdvancedQuery(query) } : null, [hasExplained, query]);
   const panel = { background: C.bg, border: "1px solid " + C.border, borderRadius: 9, padding: 13 };
   const muted = { color: C.textMuted, fontSize: 12, lineHeight: 1.6 };
 
@@ -160,6 +161,35 @@ export default function SQLQueryExplainer({ C }) {
             <div><span style={{ ...muted, fontWeight: 700 }}>Join types</span><p style={{ ...muted, margin: "3px 0 0", color: C.text }}>{result.joinTypes.length ? result.joinTypes.join(", ") : "No JOIN clause detected."}</p></div>
             <div><span style={{ ...muted, fontWeight: 700 }}>Aggregate functions</span><p style={{ ...muted, margin: "3px 0 0", color: C.text }}>{result.aggregates.length ? result.aggregates.join(", ") : "No common aggregate function detected."}</p></div>
           </div>
+        </section>
+
+        <section style={panel}>
+          <strong style={{ fontSize: 13 }}>Advanced query structures</strong>
+          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+            <div>
+              <span style={{ ...muted, fontWeight: 700 }}>Common table expressions (CTEs)</span>
+              <p style={{ ...muted, margin: "3px 0 0", color: C.text }}>{result.advanced.ctes.length ? result.advanced.ctes.map(item => item.name + " (line " + item.line + ")").join(" · ") : "No CTE definitions detected."}</p>
+            </div>
+            <div>
+              <span style={{ ...muted, fontWeight: 700 }}>Nested queries</span>
+              {result.advanced.nestedQueries.length ? result.advanced.nestedQueries.map(item => <p key={item.label + item.line} style={{ ...muted, margin: "4px 0 0", color: C.text }}>{item.label}: {item.location}, nesting depth {item.depth} (line {item.line})</p>) : <p style={{ ...muted, margin: "3px 0 0", color: C.text }}>No nested SELECT statements detected.</p>}
+            </div>
+            <div>
+              <span style={{ ...muted, fontWeight: 700 }}>Window functions</span>
+              {result.advanced.windowFunctions.length ? result.advanced.windowFunctions.map((item, index) => <p key={item.name + item.line + index} style={{ ...muted, margin: "4px 0 0", color: C.text }}>{item.name} · {item.kind} · line {item.line}</p>) : <p style={{ ...muted, margin: "3px 0 0", color: C.text }}>No recognised window functions detected.</p>}
+            </div>
+          </div>
+        </section>
+
+        <section style={panel}>
+          <strong style={{ fontSize: 13 }}>Step-by-step explanation</strong>
+          <div style={{ display: "grid", gap: 9, marginTop: 10 }}>
+            {result.advanced.steps.map((step, index) => <div key={step.title + index} style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 9, alignItems: "start" }}>
+              <span style={{ display: "grid", placeItems: "center", width: 24, height: 24, borderRadius: 20, background: C.accent, color: "#fff", fontSize: 11, fontWeight: 700 }}>{index + 1}</span>
+              <div><strong style={{ fontSize: 12, color: C.text }}>{step.title}{step.line ? " · line " + step.line : ""}</strong><p style={{ ...muted, margin: "3px 0 0" }}>{step.detail}</p></div>
+            </div>)}
+          </div>
+          {result.advanced.notes.length > 0 && <ul style={{ ...muted, paddingLeft: 18, marginBottom: 0, color: C.text }}>{result.advanced.notes.map(note => <li key={note} style={{ marginTop: 5 }}>{note}</li>)}</ul>}
         </section>
 
         <section style={panel}>
