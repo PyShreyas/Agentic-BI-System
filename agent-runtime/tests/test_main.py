@@ -152,6 +152,79 @@ def test_chat_returns_the_local_model_response(monkeypatch):
     assert response.json()["tokens_per_second"] == 12.0
 
 
+class FailingOllamaClient:
+    def __init__(self, error):
+        self.error = error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, path, json):
+        raise self.error
+
+
+def _install_default_model(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "get_ollama_tags",
+        _async_return({"models": [{"name": main.DEFAULT_MODEL}]}),
+    )
+
+
+def test_chat_returns_service_unavailable_when_ollama_cannot_connect(monkeypatch):
+    _install_default_model(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "ollama_client",
+        lambda: FailingOllamaClient(httpx.ConnectError("connection refused")),
+    )
+
+    response = request("POST", "/chat", json={"message": "Explain a DAX measure."})
+
+    assert response.status_code == 503
+    assert "Cannot connect to Ollama" in response.json()["detail"]
+
+
+def test_chat_returns_bad_gateway_when_ollama_returns_server_error(monkeypatch):
+    _install_default_model(monkeypatch)
+    upstream_response = httpx.Response(
+        500,
+        request=httpx.Request("POST", "http://127.0.0.1:11434/api/chat"),
+    )
+    error = httpx.HTTPStatusError(
+        "Ollama server error",
+        request=upstream_response.request,
+        response=upstream_response,
+    )
+    monkeypatch.setattr(
+        main,
+        "ollama_client",
+        lambda: FailingOllamaClient(error),
+    )
+
+    response = request("POST", "/chat", json={"message": "Explain a DAX measure."})
+
+    assert response.status_code == 502
+    assert "HTTP 500" in response.json()["detail"]
+
+
+def test_chat_returns_gateway_timeout_when_local_model_times_out(monkeypatch):
+    _install_default_model(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "ollama_client",
+        lambda: FailingOllamaClient(httpx.ReadTimeout("model timed out")),
+    )
+
+    response = request("POST", "/chat", json={"message": "Explain a DAX measure."})
+
+    assert response.status_code == 504
+    assert "too long to respond" in response.json()["detail"]
+
+
 def _async_return(value):
     async def result():
         return value
