@@ -3,6 +3,7 @@ import {
   collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
+import LocalAIStatus from "./components/LocalAIStatus";
 
 const QUICK_PROMPTS = [
   "What should I work on today?",
@@ -665,6 +666,8 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         <div style={{ padding: "7px 10px", borderRadius: 20, background: "#ffffff18", border: "1px solid #ffffff35", fontSize: 11, fontWeight: 700 }}>LOCAL · API FREE</div>
       </div>
     </div>
+
+    <LocalAIStatus />
 
     <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
       {QUICK_PROMPTS.map(p => <button key={p} onClick={() => send(p)} disabled={sending} style={{ ...S.btn(), fontSize: 11 }}>{p}</button>)}
