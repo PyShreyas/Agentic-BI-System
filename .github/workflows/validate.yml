@@ -32,6 +32,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Test frontend rule-set helpers
+        run: npm run test:frontend
+
       - name: Build Vite application
         run: npm run build
 
