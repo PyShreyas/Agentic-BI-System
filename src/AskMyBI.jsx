@@ -436,14 +436,42 @@ function buildWorkflowPlan(routes) {
     }));
 }
 
-async function executeWorkflowPlan(routes, tasks, reports, prompt, onStepUpdate) {
+function createWorkflowMemory(prompt, entity) {
+  return { prompt, entity, completedSteps: [], findings: [] };
+}
+
+function summarizeWorkflowFinding(step, answer) {
+  return {
+    stepNumber: step.number,
+    intent: step.intent,
+    agent: step.agent,
+    summary: String(answer || "").replace(/\s+/g, " ").trim().slice(0, 1200)
+  };
+}
+
+function formatPriorWorkflowFindings(memory) {
+  if (!memory?.findings?.length) return "";
+  return memory.findings.slice(-4)
+    .map(item => `[${item.agent} · ${item.intent}] ${item.summary}`)
+    .join("\n");
+}
+
+async function executeWorkflowPlan(routes, tasks, reports, prompt, entity, onStepUpdate) {
   const plan = buildWorkflowPlan(routes);
+  const memory = createWorkflowMemory(prompt, entity);
   const results = [];
   for (const step of plan) {
     onStepUpdate(step.number, "Running");
     try {
       const route = routes.find(item => item.intent === step.intent);
-      const answer = buildAnswer(step.intent, tasks, reports, prompt);
+      const priorFindings = formatPriorWorkflowFindings(memory);
+      const answer = buildAnswer(step.intent, tasks, reports, prompt, {
+        entity: memory.entity,
+        completedSteps: [...memory.completedSteps],
+        priorFindings
+      });
+      memory.findings.push(summarizeWorkflowFinding(step, answer));
+      memory.completedSteps.push({ number: step.number, intent: step.intent, agent: step.agent });
       results.push(`[${step.agent} · ${Math.round((route?.confidence || 0) * 100)}%]\n${answer}`);
       onStepUpdate(step.number, "Completed");
     } catch (error) {
@@ -473,7 +501,10 @@ function buildOrchestratedAnswer(orchestration, tasks, reports, prompt, executed
   const entityLine = [entity.client ? `Client: ${entity.client}` : "", entity.module ? `Module: ${entity.module}` : "", entity.report?.name ? `Report: ${entity.report.name}` : "", entity.task?.title ? `Task: ${entity.task.title}` : ""].filter(Boolean).join(" · ");
   return `BI ORCHESTRATOR\n\nPROPOSED WORKFLOW PLAN\n${planText}\n\nExecution policy: These steps only read tracker data and generate findings. Any task creation, update or archive action is presented separately and requires your explicit approval before it is written.\n\nRouted to: ${routes.slice(0, 5).map(r => r.agent).join(" + ")}${entityLine ? `\nContext: ${entityLine}` : ""}\n\nRESULTS\n${sections.join("\n\n")}\n\nNext actions\n${[...new Set(nextActions)].map(a => `• ${a}`).join("\n") || "• Review the findings and choose the next action."}`;
 }
-function buildAnswer(intent, tasks, reports, promptForAgent = "") {
+function buildAnswer(intent, tasks, reports, promptForAgent = "", workflowContext = null) {
+  const sharedContextPrompt = workflowContext?.priorFindings
+    ? `${promptForAgent}\n\nPrior agent findings (request-scoped context):\n${workflowContext.priorFindings}`
+    : promptForAgent;
   const today = dateKey();
   const tomorrow = addDaysKey(1);
   const active = activeTasks(tasks);
@@ -543,7 +574,7 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   }
 
   if (["docStandup", "workSummary", "developerNotes", "uatUpdate"].includes(intent)) {
-    return buildDocumentation(intent, tasks, reports, promptForAgent);
+    return buildDocumentation(intent, tasks, reports, sharedContextPrompt);
   }
 
   if (intent === "staleReports") {
@@ -561,7 +592,7 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "") {
   }
 
   if (intent === "reportSearch") {
-    const matches = findReportMatches(promptForAgent, reports);
+    const matches = findReportMatches(sharedContextPrompt, reports);
     if (!matches.length) return "I couldn't find a report matching that client, module, name, or keyword.";
     return "Matching reports:\n\n" + matches.slice(0, 10).map(r =>
       `• ${r.name || "Unnamed report"} — ${reportStatusLabel(r.status)} — ${r.clientName || r.client || "No client"} — ${r.module || "No module"} — ${r.priority || "medium"}`
@@ -667,7 +698,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       if (isInformationalOrchestrated) {
         const plan = buildWorkflowPlan(agentRoutes);
         setWorkflowSteps(plan.map(step => ({ ...step, status: "Pending" })));
-        const executedSections = await executeWorkflowPlan(agentRoutes, tasks, reports, text, (stepNumber, status) => {
+        const executedSections = await executeWorkflowPlan(agentRoutes, tasks, reports, text, orchestration.entity, (stepNumber, status) => {
           setWorkflowSteps(current => current.map(step => step.number === stepNumber ? { ...step, status } : step));
         });
         response = buildOrchestratedAnswer(orchestration, tasks, reports, text, executedSections);
