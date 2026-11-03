@@ -1,11 +1,20 @@
+import asyncio
+
 import httpx
-import pytest
-from fastapi.testclient import TestClient
 
 from app import main
 
 
-client = TestClient(main.app)
+def request(method, path, **kwargs):
+    async def send():
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            return await client.request(method, path, **kwargs)
+
+    return asyncio.run(send())
 
 
 class FakeResponse:
@@ -41,7 +50,7 @@ class FakeOllamaClient:
 
 
 def test_root_returns_runtime_information():
-    response = client.get("/")
+    response = request("GET", "/")
 
     assert response.status_code == 200
     assert response.json()["status"] == "running"
@@ -55,7 +64,7 @@ def test_health_reports_connected_ollama_and_installed_default_model(monkeypatch
         _async_return({"models": [{"name": main.DEFAULT_MODEL}]}),
     )
 
-    response = client.get("/health")
+    response = request("GET", "/health")
 
     assert response.status_code == 200
     assert response.json()["ollama"] == "connected"
@@ -68,7 +77,7 @@ def test_health_reports_degraded_when_ollama_is_unavailable(monkeypatch):
 
     monkeypatch.setattr(main, "get_ollama_tags", unavailable)
 
-    response = client.get("/health")
+    response = request("GET", "/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
@@ -82,7 +91,7 @@ def test_models_returns_installed_models(monkeypatch):
         _async_return({"models": [{"name": "qwen-test:latest", "size": 123}]}),
     )
 
-    response = client.get("/models")
+    response = request("GET", "/models")
 
     assert response.status_code == 200
     assert response.json()["models"][0]["name"] == "qwen-test:latest"
@@ -94,7 +103,7 @@ def test_models_returns_service_unavailable_when_ollama_is_down(monkeypatch):
 
     monkeypatch.setattr(main, "get_ollama_tags", unavailable)
 
-    response = client.get("/models")
+    response = request("GET", "/models")
 
     assert response.status_code == 503
 
@@ -106,7 +115,8 @@ def test_chat_rejects_a_model_that_is_not_installed(monkeypatch):
         _async_return({"models": []}),
     )
 
-    response = client.post(
+    response = request(
+        "POST",
         "/chat",
         json={"message": "Explain a Power BI measure.", "model": "missing:model"},
     )
@@ -116,7 +126,7 @@ def test_chat_rejects_a_model_that_is_not_installed(monkeypatch):
 
 
 def test_chat_rejects_a_whitespace_only_message():
-    response = client.post("/chat", json={"message": "   "})
+    response = request("POST", "/chat", json={"message": "   "})
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Message cannot be blank."
@@ -130,7 +140,11 @@ def test_chat_returns_the_local_model_response(monkeypatch):
     )
     monkeypatch.setattr(main, "ollama_client", FakeOllamaClient)
 
-    response = client.post("/chat", json={"message": "Explain a Power BI measure."})
+    response = request(
+        "POST",
+        "/chat",
+        json={"message": "Explain a Power BI measure."},
+    )
 
     assert response.status_code == 200
     assert response.json()["content"].startswith("A Power BI measure")
