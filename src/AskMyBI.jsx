@@ -58,6 +58,29 @@ function sortByPriorityAndDate(tasks) {
     String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31"))
   );
 }
+function rankTasksForDecision(tasks) {
+  const today = dateKey();
+  const priorityScore = { critical: 100, high: 75, medium: 45, low: 20 };
+  return activeTasks(tasks).map(task => {
+    let score = priorityScore[task.priority] ?? 35;
+    const reasons = [];
+    if (task.dueDate && task.dueDate < today) {
+      score += 35;
+      reasons.push("Overdue");
+    } else if (task.dueDate === today) {
+      score += 30;
+      reasons.push("Due today");
+    } else if (task.dueDate) {
+      const daysUntilDue = Math.ceil((new Date(task.dueDate + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000);
+      if (daysUntilDue <= 2) { score += 15; reasons.push("Due soon"); }
+    }
+    if (task.status === "in_progress") { score += 8; reasons.push("Already in progress"); }
+    if (task.status === "blocked") { score -= 60; reasons.push("Blocked — resolve dependency first"); }
+    if (["critical", "high"].includes(task.priority)) reasons.push(task.priority + " priority");
+    if (!reasons.length) reasons.push("Available backlog item");
+    return { task, score, reasons };
+  }).sort((a, b) => b.score - a.score || String(a.task.dueDate || "9999-12-31").localeCompare(String(b.task.dueDate || "9999-12-31")));
+}
 
 function normalizeReport(report) {
   return {
@@ -517,7 +540,8 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "", workflowContex
   const staleReports = reports.filter(r => r.status !== "deployed_live" && r.updatedAt && (Date.now() - (r.updatedAt.toDate ? r.updatedAt.toDate().getTime() : new Date(r.updatedAt).getTime())) > 3 * 86400000);
 
   if (intent === "myDay") {
-    const ranked = sortByPriorityAndDate([...overdue, ...dueToday, ...high.filter(t => !overdue.some(x => x.id === t.id) && !dueToday.some(x => x.id === t.id))]);
+    const rankedDecisions = rankTasksForDecision(tasks);
+    const ranked = rankedDecisions.map(item => item.task);
     const attentionReports = reportsNeedingAttention(reports);
     const staleCount = reports.filter(isStaleReport).length;
     const nextTask = ranked[0] || inProgress[0];
@@ -526,11 +550,11 @@ function buildAnswer(intent, tasks, reports, promptForAgent = "", workflowContex
       return `Morning briefing:\n\n• No urgent or due tasks are currently on your board.\n• Reports needing attention: ${attentionReports.length}.\n• Stale reports: ${staleCount}.\n\nRecommendation: review the backlog and choose the next BI priority.`;
     }
 
-    return `Morning briefing:\n\nTasks\n• Due today: ${dueToday.length}\n• Overdue: ${overdue.length}\n• Critical/High active: ${high.length}\n• Blocked: ${blocked.length}\n• In progress: ${inProgress.length}\n\nReports\n• Need attention: ${attentionReports.length}\n• Stale: ${staleCount}\n\nRecommended order\n${ranked.slice(0, 5).map((t, i) => `${i + 1}. ${t.title} — ${t.priority || "medium"} — ${t.dueDate && t.dueDate < today ? "Overdue" : "Due today"}`).join("\n") || "• Continue your current in-progress work."}\n\nNext best action: ${nextTask ? nextTask.title : "Continue your current in-progress work."}`;
+    return `Morning briefing:\n\nTasks\n• Due today: ${dueToday.length}\n• Overdue: ${overdue.length}\n• Critical/High active: ${high.length}\n• Blocked: ${blocked.length}\n• In progress: ${inProgress.length}\n\nReports\n• Need attention: ${attentionReports.length}\n• Stale: ${staleCount}\n\nRecommended order\n${rankedDecisions.slice(0, 5).map((item, i) => `${i + 1}. ${item.task.title} — score ${item.score} — ${item.reasons.join(", ")}`).join("\n") || "• Continue your current in-progress work."}\n\nNext best action: ${nextTask ? nextTask.title : "Continue your current in-progress work."}`;
   }
 
   if (intent === "today") {
-    const candidates = sortByPriorityAndDate([...overdue, ...dueToday, ...high.filter(t => !dueToday.some(x => x.id === t.id))]);
+    const candidates = rankTasksForDecision(tasks).map(item => item.task);
     if (!candidates.length) return "You have no active tasks due today or overdue. Good time to review the backlog and choose the next BI priority.";
     return "Recommended work for today:\n\n" + candidates.slice(0, 5).map((t, i) =>
       `${i + 1}. ${t.title} — ${t.priority || "medium"} — ${t.dueDate === today ? "Due today" : t.dueDate && t.dueDate < today ? "Overdue" : "Priority"}`
@@ -641,7 +665,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
   const context = useMemo(() => ({ tasks, reports }), [tasks, reports]);
 
   const executeAction = async () => {
-    if (!pendingAction) return;
+    if (!pendingAction || pendingAction.approvalRequired !== true) return;
     setSending(true);
     try {
       if (pendingAction.type === "createTask") {
@@ -705,14 +729,14 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
       } else {
       if (intent === "createTask") {
         const data = parseCreateTask(text);
-        setPendingAction({ type: "createTask", data });
+        setPendingAction({ type: "createTask", data, approvalRequired: true, sourceAgent: "Task Agent" });
         response = `I prepared this action:\n\nCreate task: ${data.title}\nCategory: ${data.category}\nPriority: ${data.priority}\nDue: ${data.dueDate || "No due date"}`;
       } else if (["updatePriority","updateDueDate","updateStatus","deleteTask"].includes(intent)) {
         const task = findTaskMention(text, tasks);
         if (!task) {
           response = "I couldn't identify which task you mean. Include the exact task name.";
         } else if (intent === "deleteTask") {
-          setPendingAction({ type: "deleteTask", task });
+          setPendingAction({ type: "deleteTask", task, approvalRequired: true, sourceAgent: "Task Agent" });
           response = `I prepared this action:\n\nArchive task: ${task.title}`;
         } else {
           const action = { type: "updateTask", task };
@@ -722,7 +746,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
           if (!action.priority && action.dueDate === undefined && !action.status) {
             response = "Please specify the new priority, due date (today, tomorrow, or YYYY-MM-DD), or status.";
           } else {
-            setPendingAction(action);
+            setPendingAction({ ...action, approvalRequired: true, sourceAgent: "Task Agent" });
             response = `I prepared this action for “${task.title}”.`;
           }
         }
@@ -734,7 +758,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         const task = findTaskMention(text, tasks);
         if (!task) response = "I couldn't identify which task you want to complete. Include the task name.";
         else {
-          setPendingAction({ type: "completeTask", task });
+          setPendingAction({ type: "completeTask", task, approvalRequired: true, sourceAgent: "Task Agent" });
           response = `I prepared this action:\n\nMark “${task.title}” as Done.`;
         }
       } else {
