@@ -49,7 +49,7 @@ function addDaysKey(days) {
 }
 
 function activeTasks(tasks) {
-  return tasks.filter(t => t.status !== "done");
+  return tasks.filter(t => !["done", "deleted", "archived"].includes(t.status));
 }
 
 function sortByPriorityAndDate(tasks) {
