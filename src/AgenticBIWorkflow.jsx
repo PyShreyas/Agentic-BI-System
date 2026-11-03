@@ -69,8 +69,7 @@ export default function AgenticBIWorkflow({ C, S }) {
           {selectedAgent.tabs.map(tab => <button key={tab} onClick={() => setActiveTab(tab)} style={{ whiteSpace: "nowrap", border: "none", borderRadius: 7, padding: "8px 11px", cursor: "pointer", fontSize: 12, fontWeight: activeTab === tab ? 700 : 500, background: activeTab === tab ? C.accent : "transparent", color: activeTab === tab ? "#fff" : C.textMuted }}>{tab}</button>)}
         </div>
         <div style={{ padding: 18 }}>
-          {selectedAgent.id === "sql" && activeTab === "SQL Generator" ? <SQLAgentWorkspace C={C} /> : null}
-          {selectedAgent.id === "orchestrator" && activeTab === "Workflow Builder" ? (
+          {selectedAgent.id === "sql" && activeTab === "SQL Generator" ? <SQLAgentWorkspace C={C} /> : selectedAgent.id === "orchestrator" && activeTab === "Workflow Builder" ? (
             <div>
               <h4 style={{ margin: "0 0 6px" }}>Multi-agent workflow example</h4>
               <p style={muted}>A single request can be decomposed into specialist steps. This preview illustrates the planned user experience; it does not execute database queries.</p>
