@@ -14,7 +14,7 @@ function isBlank(value) {
 function parseFiniteNumber(value) {
   if (isBlank(value)) return null;
   const text = String(value).trim().replace(/,/g, "");
-  if (!/^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?$/i.test(text)) return null;
+  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text)) return null;
   const number = Number(text);
   return Number.isFinite(number) ? number : null;
 }
@@ -22,7 +22,7 @@ function parseFiniteNumber(value) {
 function parseStrictDate(value) {
   if (isBlank(value)) return null;
   const text = String(value).trim();
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(text)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
   const date = new Date(text + "T00:00:00.000Z");
   return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text ? null : text;
 }
@@ -195,19 +195,19 @@ function validateDatasetRules(dataset, rules) {
 
 function escapeCsvCell(value) {
   const text = String(value ?? "");
-  return /[",\\r\\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
 
 function buildValidationIssuesCsv(result) {
   const headers = ["rowNumber", "ruleName", "severity", "column", "value", "compareColumn", "compareValue", "message"];
   return [headers, ...(result?.issues || []).map(issue => headers.map(header => issue[header]))]
-    .map(row => row.map(escapeCsvCell).join(",")).join("\\r\\n");
+    .map(row => row.map(escapeCsvCell).join(",")).join("\r\n");
 }
 
 function buildValidationSummaryCsv(result) {
   const headers = ["ruleName", "type", "column", "severity", "passed", "failed", "skipped", "passPercentage"];
   return [headers, ...(result?.ruleResults || []).map(item => headers.map(header => item[header]))]
-    .map(row => row.map(escapeCsvCell).join(",")).join("\\r\\n");
+    .map(row => row.map(escapeCsvCell).join(",")).join("\r\n");
 }
 
 export {
