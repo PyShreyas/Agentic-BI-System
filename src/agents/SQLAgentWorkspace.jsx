@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const schemaStorageKey = "agenticBi.sqlSchemaCatalog.v1";
 
 const fieldStyle = { width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 8, border: "1px solid var(--sql-border)", background: "var(--sql-surface)", color: "inherit", font: "inherit" };
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_$#]*$/;
@@ -15,6 +17,24 @@ export default function SQLAgentWorkspace({ C }) {
   const [query, setQuery] = useState("");
   const [feedback, setFeedback] = useState("");
   const [explanation, setExplanation] = useState("");
+  const [schemaCatalog, setSchemaCatalog] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[]}');
+      return saved && Array.isArray(saved.tables) ? saved.tables : [];
+    } catch { return []; }
+  });
+  const [selectedCatalogObjectId, setSelectedCatalogObjectId] = useState("");
+  const [selectedColumnNames, setSelectedColumnNames] = useState([]);
+  const selectedCatalogObject = schemaCatalog.find(item => item.id === selectedCatalogObjectId);
+  const catalogObjectOptions = useMemo(() => schemaCatalog.map(item => ({ id: item.id, label: item.schemaName + "." + item.objectName })), [schemaCatalog]);
+  useEffect(() => {
+    const refreshCatalog = () => {
+      try { const saved = JSON.parse(localStorage.getItem(schemaStorageKey) || '{"tables":[]}'); setSchemaCatalog(saved && Array.isArray(saved.tables) ? saved.tables : []); }
+      catch { setSchemaCatalog([]); }
+    };
+    window.addEventListener("storage", refreshCatalog);
+    return () => window.removeEventListener("storage", refreshCatalog);
+  }, []);
 
   const updateTable = (index, field, value) => {
     setTables(current => current.map((table, i) => i === index ? { ...table, [field]: value } : table));
@@ -26,6 +46,25 @@ export default function SQLAgentWorkspace({ C }) {
   ]);
 
   const removeTable = index => setTables(current => current.filter((_, i) => i !== index));
+
+  const applyCatalogObject = (index, objectId) => {
+    const object = schemaCatalog.find(item => item.id === objectId);
+    if (!object) return;
+    updateTable(index, "schema", object.schemaName);
+    updateTable(index, "name", object.objectName);
+    setSelectedCatalogObjectId(objectId);
+    setSelectedColumnNames([]);
+  };
+
+  const addSelectedCatalogColumns = () => {
+    if (!selectedCatalogObject || !selectedColumnNames.length) { setFeedback("Select a catalog object and at least one column first."); return; }
+    const sourceIndex = tables.findIndex(table => table.schema === selectedCatalogObject.schemaName && table.name === selectedCatalogObject.objectName);
+    if (sourceIndex < 0) { setFeedback("Add this object as a base or join source before selecting its columns."); return; }
+    const additions = selectedColumnNames.map(name => tables[sourceIndex].alias.trim() + "." + quoteIdentifier(name));
+    const current = selectColumns.trim();
+    setSelectColumns(current === "*" || !current ? additions.join(", ") : [current, ...additions].join(", "));
+    setFeedback(additions.length + " catalog column(s) added. Verify aliases and business meaning.");
+  };
 
   const generate = () => {
     if (!tables.length || tables.some(table =>
@@ -121,6 +160,32 @@ export default function SQLAgentWorkspace({ C }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <button onClick={addTable} disabled={tables.length >= 8} style={{ padding: "8px 11px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer" }}>+ Add table / view</button>
         </div>
+        {catalogObjectOptions.length > 0 && <div style={{ border: "1px solid " + C.border, borderRadius: 8, padding: 11, marginTop: 12, display: "grid", gap: 9 }}>
+          <div><strong style={{ fontSize: 12 }}>Use registered schema metadata</strong><p style={{ color: C.textMuted, fontSize: 11, lineHeight: 1.5, margin: "4px 0 0" }}>Select an object from Schema Explorer to populate a source, then add its registered columns to SELECT. Metadata stays in this browser.</p></div>
+          <label style={fieldLabel}>Catalog object
+            <select value={selectedCatalogObjectId} onChange={event => { setSelectedCatalogObjectId(event.target.value); setSelectedColumnNames([]); }} style={fieldStyle}>
+              <option value="">Select a registered table / view</option>
+              {catalogObjectOptions.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </label>
+          {selectedCatalogObject && <div style={{ display: "grid", gap: 7 }}>
+            <label style={fieldLabel}>Populate source
+              <select value="" onChange={event => { const index = Number(event.target.value); if (event.target.value !== "") applyCatalogObject(index, selectedCatalogObject.id); }} style={fieldStyle}>
+                <option value="">Choose base / join source</option>
+                {tables.map((table, index) => <option key={index} value={index}>{index === 0 ? "Base source" : "Join source " + index} · {table.alias}</option>)}
+              </select>
+            </label>
+            <span style={{ color: C.textMuted, fontSize: 11 }}>{selectedCatalogObject.columns.length} registered columns · {selectedCatalogObject.objectType}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 6, maxHeight: 190, overflowY: "auto" }}>
+              {selectedCatalogObject.columns.map(column => <label key={column.name} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", border: "1px solid " + C.border, borderRadius: 6, fontSize: 11 }}>
+                <input type="checkbox" checked={selectedColumnNames.includes(column.name)} onChange={event => setSelectedColumnNames(current => event.target.checked ? [...current, column.name] : current.filter(name => name !== column.name))} />
+                <span>{column.name}</span><span style={{ color: C.textMuted, marginLeft: "auto" }}>{column.dataType}</span>{column.isPrimaryKey && <span>PK</span>}{column.isForeignKey && <span>FK</span>}
+              </label>)}
+            </div>
+            <button onClick={addSelectedCatalogColumns} style={{ padding: "8px 11px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer" }}>Add selected columns to SELECT</button>
+          </div>}
+        </div>}
+        {catalogObjectOptions.length === 0 && <p style={{ color: C.textMuted, fontSize: 11, margin: "8px 0 0" }}>No local schema objects found. Register tables and columns in SQL Agent → Schema Explorer first.</p>}
         <div style={{ borderTop: "1px solid " + C.border, marginTop: 14, paddingTop: 12, display: "grid", gap: 10 }}>
           <strong style={{ fontSize: 12 }}>Query specification</strong>
           <label style={fieldLabel}>Output columns / expressions<textarea value={selectColumns} onChange={e => setSelectColumns(e.target.value)} rows={2} style={fieldStyle} placeholder="t1.Vessel_Name, COUNT(*) AS PurchaseOrderCount" /></label>
