@@ -8,9 +8,11 @@ import {
   buildValidationSummaryCsv,
   buildProfileRuleSuggestions
 } from "./dataQualityRules";
+import { createRuleSetExport, parseRuleSetImport, findRuleSetColumnReferences, remapRuleSetColumns } from "./ruleSetLibrary";
 
 const STORAGE_KEY = "agenticBi.dataQualityRules.v1";
 const HISTORY_KEY = "agenticBi.dataQualityHistory.v1";
+const RULE_SET_LIBRARY_KEY = "agenticBi.dataQualityRuleSets.v1";
 const panel = C => ({ background: C.bg, border: "1px solid " + C.border, borderRadius: 10, padding: 14 });
 const muted = C => ({ color: C.textMuted, fontSize: 12, lineHeight: 1.6 });
 const field = C => ({ width: "100%", boxSizing: "border-box", padding: 9, borderRadius: 8, border: "1px solid " + C.border, background: C.surface, color: C.text, font: "inherit", minWidth: 0 });
@@ -30,6 +32,11 @@ const emptyDraft = {
   caseInsensitive: false,
   allowBlank: false
 };
+
+function downloadJson(content, fileName) {
+  const url = URL.createObjectURL(new Blob([content], { type: "application/json;charset=utf-8;" }));
+  const anchor = document.createElement("a"); anchor.href = url; anchor.download = fileName; anchor.click(); URL.revokeObjectURL(url);
+}
 
 function downloadCsv(content, fileName) {
   const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8;" }));
@@ -74,6 +81,10 @@ export default function DataQualityRulesWorkspace({ C }) {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
   const [history, setHistory] = useState([]);
+  const [ruleSets, setRuleSets] = useState([]);
+  const [ruleSetName, setRuleSetName] = useState("");
+  const [importPreview, setImportPreview] = useState(null);
+  const [columnMap, setColumnMap] = useState({});
 
   useEffect(() => {
     try {
@@ -95,6 +106,18 @@ export default function DataQualityRulesWorkspace({ C }) {
 
   useEffect(() => {
     try {
+      const saved = JSON.parse(localStorage.getItem(RULE_SET_LIBRARY_KEY) || "[]");
+      if (Array.isArray(saved)) setRuleSets(saved.filter(item => item && typeof item.id === "string" && typeof item.name === "string" && Array.isArray(item.rules)));
+    } catch { setRuleSets([]); }
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem(RULE_SET_LIBRARY_KEY, JSON.stringify(ruleSets.slice(0, 50))); }
+    catch { /* The rule editor remains usable when browser storage is unavailable. */ }
+  }, [ruleSets]);
+
+  useEffect(() => {
+    try {
       const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
       if (Array.isArray(saved)) setHistory(saved);
     } catch { setHistory([]); }
@@ -109,6 +132,54 @@ export default function DataQualityRulesWorkspace({ C }) {
       return next;
     });
   }, [result]);
+
+  const saveCurrentRuleSet = () => {
+    const name = ruleSetName.trim();
+    if (!name) return setError("Enter a name for this rule set.");
+    if (!rules.length) return setError("Add at least one rule before saving a rule set.");
+    if (ruleSets.length >= 50) return setError("The local library can hold up to 50 rule sets. Delete one before adding another.");
+    const now = new Date().toISOString();
+    setRuleSets(previous => [{ id: "rule-set-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7), name: name.slice(0, 80), rules: rules.map(rule => ({ ...rule })), createdAt: now, updatedAt: now }, ...previous]);
+    setRuleSetName("");
+    setError("");
+  };
+
+  const loadRuleSet = savedSet => {
+    setRules(savedSet.rules.map((rule, index) => ({ ...rule, id: "loaded-" + Date.now() + "-" + index })));
+    setResult(null);
+    setError("");
+  };
+
+  const deleteRuleSet = id => setRuleSets(previous => previous.filter(item => item.id !== id));
+
+  const previewRuleSetImport = async file => {
+    if (!file) return;
+    setError("");
+    try {
+      if (file.size > 1024 * 1024) throw new Error("Rule-set JSON files must be 1 MB or smaller.");
+      const parsed = parseRuleSetImport(await file.text());
+      const references = findRuleSetColumnReferences(parsed.rules);
+      const missingColumns = dataset ? references.filter(column => !dataset.headers.includes(column)) : [];
+      setImportPreview({ ...parsed, missingColumns, fileName: file.name });
+      setColumnMap({});
+    } catch (importError) {
+      setImportPreview(null);
+      setError(importError.message || "Unable to preview this rule set.");
+    }
+  };
+
+  const confirmRuleSetImport = () => {
+    if (!importPreview) return;
+    const unresolved = importPreview.missingColumns.filter(column => !columnMap[column]);
+    if (unresolved.length) return setError("Map every missing column before importing this rule set.");
+    const mappedRules = remapRuleSetColumns(importPreview.rules, columnMap);
+    const now = new Date().toISOString();
+    const imported = { id: "rule-set-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7), name: importPreview.name, rules: mappedRules, createdAt: now, updatedAt: now };
+    setRuleSets(previous => [imported, ...previous].slice(0, 50));
+    setImportPreview(null);
+    setColumnMap({});
+    setError("");
+  };
 
   const updateDraft = (key, value) => setDraft(previous => ({ ...previous, [key]: value }));
   const visibleIssues = useMemo(() => (result?.issues || []).filter(issue => filter === "all" || issue.severity === filter), [result, filter]);
@@ -233,6 +304,29 @@ export default function DataQualityRulesWorkspace({ C }) {
         <span style={{ ...muted(C), fontWeight: 400 }}>{dataset ? dataset.fileName + " · " + dataset.rowCount.toLocaleString() + " rows · " + dataset.headers.length + " columns" : "CSV only · maximum 10 MB · processed in this browser"}</span>
       </label>
       {busy && <p style={muted(C)}>Reading CSV…</p>}
+    </section>
+
+    <section style={panel(C)}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div><strong style={{ fontSize: 13 }}>Reusable rule-set library</strong><p style={{ ...muted(C), margin: "3px 0 0" }}>Save named rule collections, reuse them across CSV files, and move them between devices with JSON exports.</p></div>
+        <span style={{ ...muted(C), fontSize: 10 }}>Local only · up to 50 rule sets</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <input value={ruleSetName} onChange={event => setRuleSetName(event.target.value)} maxLength={80} placeholder="Name this rule set" aria-label="Rule set name" style={{ ...field(C), flex: "1 1 190px" }} />
+        <button onClick={saveCurrentRuleSet} disabled={!rules.length} style={{ padding: "8px 11px", border: 0, borderRadius: 7, background: C.accent, color: "#fff", cursor: "pointer", fontWeight: 700, opacity: rules.length ? 1 : .5 }}>Save current rules</button>
+        <label style={{ padding: "8px 11px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Import JSON<input type="file" accept=".json,application/json" onChange={event => previewRuleSetImport(event.target.files?.[0] || null)} style={{ display: "none" }} /></label>
+      </div>
+      {importPreview && <div style={{ marginTop: 12, padding: 11, border: "1px solid " + C.border, borderRadius: 8, background: C.surface }}>
+        <strong style={{ fontSize: 12 }}>Import preview · {importPreview.name}</strong><p style={muted(C)}>{importPreview.rules.length} rules · {importPreview.fileName}. Import creates a new library entry and never overwrites an existing rule set.</p>
+        {importPreview.missingColumns.length > 0 ? <div style={{ display: "grid", gap: 7, marginTop: 8 }}><p style={muted(C)}>Some referenced columns are not present in the current CSV. Map each one, or cancel and import after loading the intended dataset.</p>{importPreview.missingColumns.map(column => <label key={column} style={{ display: "grid", gridTemplateColumns: "minmax(100px, 1fr) minmax(150px, 2fr)", gap: 8, alignItems: "center", fontSize: 11 }}>{column}<select value={columnMap[column] || ""} onChange={event => setColumnMap(previous => ({ ...previous, [column]: event.target.value }))} style={field(C)}><option value="">Select matching column</option>{(dataset?.headers || []).map(header => <option key={header} value={header}>{header}</option>)}</select></label>)}</div> : <p style={muted(C)}>Column references are compatible with the current dataset, or will be checked when a dataset is loaded.</p>}
+        <div style={{ display: "flex", gap: 7, marginTop: 10 }}><button onClick={confirmRuleSetImport} disabled={ruleSets.length >= 50 || importPreview.missingColumns.some(column => !columnMap[column])} style={{ padding: "7px 10px", border: 0, borderRadius: 6, background: C.accent, color: "#fff", cursor: "pointer", opacity: ruleSets.length >= 50 || importPreview.missingColumns.some(column => !columnMap[column]) ? .5 : 1 }}>Add to library</button><button onClick={() => { setImportPreview(null); setColumnMap({}); }} style={{ padding: "7px 10px", border: "1px solid " + C.border, borderRadius: 6, background: C.surface, color: C.text, cursor: "pointer" }}>Cancel</button></div>
+      </div>}
+      {ruleSets.length ? <div style={{ display: "grid", gap: 7, marginTop: 12 }}>{ruleSets.map(savedSet => <div key={savedSet.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 9, border: "1px solid " + C.border, borderRadius: 8 }}>
+        <div style={{ flex: 1, minWidth: 150 }}><strong style={{ fontSize: 11 }}>{savedSet.name}</strong><div style={muted(C)}>{savedSet.rules.length} rules · updated {savedSet.updatedAt ? new Date(savedSet.updatedAt).toLocaleDateString() : "date unavailable"}</div></div>
+        <button onClick={() => loadRuleSet(savedSet)} style={{ padding: "6px 9px", border: "1px solid " + C.border, borderRadius: 6, background: C.surface, color: C.text, cursor: "pointer", fontSize: 10 }}>Load</button>
+        <button onClick={() => downloadJson(createRuleSetExport(savedSet), savedSet.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-rules.json")} style={{ padding: "6px 9px", border: "1px solid " + C.border, borderRadius: 6, background: C.surface, color: C.text, cursor: "pointer", fontSize: 10 }}>Export</button>
+        <button onClick={() => deleteRuleSet(savedSet.id)} style={{ padding: "6px 9px", border: "1px solid " + C.border, borderRadius: 6, background: C.surface, color: C.text, cursor: "pointer", fontSize: 10 }}>Delete</button>
+      </div>)}</div> : <p style={{ ...muted(C), marginTop: 12 }}>No named rule sets yet. Save your current rules to create the first reusable collection.</p>}
     </section>
 
     {dataset && <section style={panel(C)}>
