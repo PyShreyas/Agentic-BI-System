@@ -1,9 +1,9 @@
 const blockedWords = new Set([
   "INSERT", "UPDATE", "DELETE", "MERGE", "DROP", "ALTER", "CREATE",
   "TRUNCATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY",
-  "BACKUP", "RESTORE", "DBCC", "INTO", "BULK"
+  "BACKUP", "RESTORE", "DBCC", "INTO", "BULK", "OPENROWSET", "OPENDATASOURCE", "OPENQUERY"
 ]);
-const blockedFunctions = new Set(["XP_CMDSHELL", "SP_OACREATE", "SP_OAMETHOD", "SP_OAGetProperty", "SP_OASetProperty"]);
+const blockedFunctions = new Set(["XP_CMDSHELL", "SP_OACREATE", "SP_OAMETHOD", "SP_OAGETPROPERTY", "SP_OASETPROPERTY", "SP_EXECUTESQL"]);
 
 function tokenizeSql(sql) {
   const tokens = [];
@@ -83,6 +83,7 @@ export function validateReadOnlySql(sql) {
   if (detectedBlocked.length) blockers.push("Blocked operation keyword(s): " + detectedBlocked.join(", ") + ".");
   const dangerousFunction = words.find(word => blockedFunctions.has(word));
   if (dangerousFunction) blockers.push("Potentially dangerous system/automation function detected: " + dangerousFunction + ".");
+  if (words.includes("NEXT") && words.includes("VALUE") && words.includes("FOR")) blockers.push("Sequence advancement (NEXT VALUE FOR) changes database state and is not allowed.");
 
   if (semicolonIndexes.length > 1 || (semicolonIndexes.length === 1 && semicolonIndexes[0] !== finalTokenIndex)) {
     blockers.push("Multiple statements or an embedded statement terminator were detected.");
