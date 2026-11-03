@@ -51,7 +51,7 @@ export default function SQLAgentWorkspace({ C }) {
       else missingConditions.push(index + 2);
     });
     lines.push(";");
-    setQuery(lines.join("\\n"));
+    setQuery(lines.join("\n"));
     setFeedback(missingConditions.length
       ? "Starter generated. Add an ON condition for source(s) " + missingConditions.join(", ") + " before using the query. Join keys are never guessed."
       : tables.length > 1
@@ -61,10 +61,10 @@ export default function SQLAgentWorkspace({ C }) {
   };
 
   const validate = () => {
-    const normalized = query.replace(/--[^\\n]*/g, " ").replace(/\\/[\\*][\\s\\S]*?[\\*]\\//g, " ").trim();
+    const normalized = query.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ").trim();
     const statements = normalized.split(";").map(value => value.trim()).filter(Boolean);
-    const blocked = /\\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY|BACKUP|RESTORE|DBCC|OPENROWSET|OPENDATASOURCE|INTO)\\b/i.test(normalized);
-    const valid = /^(SELECT|WITH)\\b/i.test(normalized) && !blocked && statements.length === 1;
+    const blocked = /\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY|BACKUP|RESTORE|DBCC|OPENROWSET|OPENDATASOURCE|INTO)\b/i.test(normalized);
+    const valid = /^(SELECT|WITH)\b/i.test(normalized) && !blocked && statements.length === 1;
     setFeedback(valid
       ? "Preflight passed: one SELECT/CTE statement and no detected write/DDL keywords. This is not a security parser."
       : "Preflight blocked: use one SELECT or read-only CTE. Write/DDL/EXEC keywords and SELECT INTO are not allowed.");
@@ -73,8 +73,8 @@ export default function SQLAgentWorkspace({ C }) {
   const explain = () => {
     if (!query.trim()) { setExplanation("Enter a SQL statement first."); return; }
     const clauses = ["SELECT", "FROM", "JOIN", "WHERE", "GROUP BY", "HAVING", "ORDER BY", "TOP"];
-    const found = clauses.filter(clause => new RegExp("\\\\b" + clause.replace(" ", "\\\\s+") + "\\\\b", "i").test(query));
-    setExplanation("Detected clauses: " + (found.join(", ") || "none") + ".\\n\\nSELECT chooses output columns; FROM identifies the source; JOIN combines related sources; WHERE filters rows; GROUP BY aggregates rows; HAVING filters groups; ORDER BY sorts results; TOP limits SQL Server output. Verify join keys, filters and business definitions against your schema.");
+    const found = clauses.filter(clause => new RegExp("\\b" + clause.replace(" ", "\\s+") + "\\b", "i").test(query));
+    setExplanation("Detected clauses: " + (found.join(", ") || "none") + "\n\nSELECT chooses output columns; FROM identifies the source; JOIN combines related sources; WHERE filters rows; GROUP BY aggregates rows; HAVING filters groups; ORDER BY sorts results; TOP limits SQL Server output. Verify join keys, filters and business definitions against your schema.");
   };
 
   const panel = { background: C.bg, border: "1px solid " + C.border, borderRadius: 9, padding: 12 };
