@@ -30,7 +30,7 @@ const emptyDraft = {
 };
 
 function downloadCsv(content, fileName) {
-  const url = URL.createObjectURL(new Blob(["\\uFEFF", content], { type: "text/csv;charset=utf-8;" }));
+  const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8;" }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileName;
@@ -207,7 +207,7 @@ export default function DataQualityRulesWorkspace({ C }) {
       </div>}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10 }}>
         {["allowedValues", "compareColumns"].includes(draft.type) && <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}><input type="checkbox" checked={draft.caseInsensitive} onChange={event => updateDraft("caseInsensitive", event.target.checked)} />Ignore letter case</label>}
-        {["allowedValues", "numericRange", "dateRange", "compareColumns"].includes(draft.type) && <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}><input type="checkbox" checked={draft.allowBlank} onChange={event => updateDraft("allowBlank", event.target.checked)} />Allow blank values</label>}
+        {draft.type === "allowedValues" && <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}><input type="checkbox" checked={draft.allowBlank} onChange={event => updateDraft("allowBlank", event.target.checked)} />Allow blank values</label>}
       </div>
       <button onClick={makeRule} style={{ marginTop: 12, padding: "9px 14px", border: 0, borderRadius: 7, background: C.accent, color: "#fff", cursor: "pointer", fontWeight: 700 }}>Add validation rule</button>
 
