@@ -65,7 +65,8 @@ function IssueTable({ issues, C }) {
 }
 
 export default function DataQualityRulesWorkspace({ C }) {
-  const [dataset, setDataset] = useState(null);\n  const [profile, setProfile] = useState(null);
+  const [dataset, setDataset] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [rules, setRules] = useState([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [result, setResult] = useState(null);
@@ -117,12 +118,17 @@ export default function DataQualityRulesWorkspace({ C }) {
     setBusy(true);
     setError("");
     setResult(null);
+    setProfile(null);
+    setDataset(null);
     try {
       const parsed = await readProfileCsvFile(file);
       setDataset(parsed);
+      setProfile(profileDataset(parsed));
       setDraft(previous => ({ ...previous, column: parsed.headers[0] || "", compareColumn: parsed.headers[1] || parsed.headers[0] || "" }));
     } catch (loadError) {
-      setProfile(null);\n      setDataset(null);\n      setError(loadError.message || "Unable to read this CSV file.");
+      setProfile(null);
+      setDataset(null);
+      setError(loadError.message || "Unable to read this CSV file.");
     } finally {
       setBusy(false);
     }
@@ -251,7 +257,8 @@ export default function DataQualityRulesWorkspace({ C }) {
         </div> : <p style={muted(C)}>No profile-based suggestions for this dataset. You can still create rules manually.</p>}
         <p style={{ ...muted(C), margin: "9px 0 0" }}>These are heuristic drafts, not approved business rules. Observed categories may be incomplete, and candidate-key uniqueness must be confirmed with the data owner.</p>
       </div>}
-\n      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 9, marginTop: 12 }}>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 9, marginTop: 12 }}>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Rule name<input value={draft.name} onChange={event => updateDraft("name", event.target.value)} placeholder="e.g. Cost must be positive" style={field(C)} /></label>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Rule type<select value={draft.type} onChange={event => updateDraft("type", event.target.value)} style={field(C)}>{RULE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
         <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 700 }}>Target column<select value={draft.column} onChange={event => updateDraft("column", event.target.value)} style={field(C)}>{dataset.headers.map(header => <option key={header} value={header}>{header}</option>)}</select></label>
