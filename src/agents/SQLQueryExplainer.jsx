@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { describeAdvancedQuery } from "./sqlQueryAnalysis";
+import { analyzeSqlJoins } from "./sqlJoinAnalysis";
 
 const fieldStyle = {
   width: "100%",
@@ -117,7 +118,7 @@ export default function SQLQueryExplainer({ C }) {
   const [query, setQuery] = useState("");
   const [selectedExample, setSelectedExample] = useState("");
   const [hasExplained, setHasExplained] = useState(false);
-  const result = useMemo(() => hasExplained && query.trim() ? { ...describeQuery(query), advanced: describeAdvancedQuery(query) } : null, [hasExplained, query]);
+  const result = useMemo(() => hasExplained && query.trim() ? { ...describeQuery(query), advanced: describeAdvancedQuery(query), joinAnalysis: analyzeSqlJoins(query) } : null, [hasExplained, query]);
   const panel = { background: C.bg, border: "1px solid " + C.border, borderRadius: 9, padding: 13 };
   const muted = { color: C.textMuted, fontSize: 12, lineHeight: 1.6 };
 
@@ -155,10 +156,45 @@ export default function SQLQueryExplainer({ C }) {
 
       {result && <>
         <section style={panel}>
-          <strong style={{ fontSize: 13 }}>Query flow</strong>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 10 }}>
-            {result.flow.map((step, index) => <span key={step} style={{ padding: "7px 9px", borderRadius: 7, border: "1px solid " + C.border, background: C.surface, color: C.text, fontSize: 11 }}>{index + 1}. {step}</span>)}
+          <strong style={{ fontSize: 13 }}>Visual query flow</strong>
+          <p style={{ ...muted, margin: "4px 0 10px" }}>A simplified logical path detected from the SQL text. SQL Server's actual execution plan may use a different physical order.</p>
+          <div style={{ display: "flex", alignItems: "stretch", gap: 7, overflowX: "auto", padding: "4px 0 8px" }}>
+            {result.flow.map((step, index) => <div key={step} style={{ display: "flex", alignItems: "center", gap: 7, flex: "0 0 auto" }}>
+              <div style={{ minWidth: 112, maxWidth: 160, minHeight: 58, display: "grid", alignContent: "center", gap: 4, padding: "9px 11px", borderRadius: 9, border: "1px solid " + C.border, background: C.surface, color: C.text }}>
+                <span style={{ color: C.accent, fontSize: 10, fontWeight: 800 }}>STEP {index + 1}</span>
+                <span style={{ fontSize: 11, lineHeight: 1.4, fontWeight: 650 }}>{step}</span>
+              </div>
+              {index < result.flow.length - 1 && <span aria-hidden="true" style={{ color: C.accent, fontSize: 18, fontWeight: 800 }}>→</span>}
+            </div>)}
           </div>
+        </section>
+
+        <section style={panel}>
+          <strong style={{ fontSize: 13 }}>Join analysis and key mapping</strong>
+          <p style={{ ...muted, margin: "4px 0 10px" }}>{result.joinAnalysis.summary} Join cardinality is deliberately not guessed from SQL syntax.</p>
+          {result.joinAnalysis.joins.length ? <div style={{ display: "grid", gap: 11 }}>
+            {result.joinAnalysis.joins.map((join, index) => <div key={join.alias + index} style={{ padding: 12, border: "1px solid " + C.border, borderRadius: 9, background: C.surface }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7 }}>
+                <span style={{ padding: "4px 7px", borderRadius: 6, background: C.accent + "18", color: C.accent, fontSize: 10, fontWeight: 800 }}>{join.type}</span>
+                <strong style={{ color: C.text, fontSize: 12 }}>{join.object}</strong>
+                <span style={muted}>alias: {join.alias}</span>
+              </div>
+              <div style={{ marginTop: 9 }}>
+                <span style={{ ...muted, fontWeight: 700 }}>Detected key pairs</span>
+                {join.pairs.length ? join.pairs.map((pair, pairIndex) => <div key={pair.left + pair.right + pairIndex} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 7, marginTop: 5, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 11, color: C.text }}>
+                  <span style={{ padding: "5px 7px", borderRadius: 6, background: C.bg }}>{pair.left}</span>
+                  <span style={{ color: C.accent, fontWeight: 800 }}>=</span>
+                  <span style={{ padding: "5px 7px", borderRadius: 6, background: C.bg }}>{pair.right}</span>
+                </div>) : <p style={{ ...muted, margin: "4px 0 0" }}>No simple qualified equality pair could be extracted.</p>}
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <span style={{ ...muted, fontWeight: 700 }}>ON condition</span>
+                <code style={{ display: "block", whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 4, padding: 8, borderRadius: 6, background: C.bg, color: C.text, fontSize: 11 }}>{join.onClause || "No ON condition detected"}</code>
+              </div>
+              <p style={{ ...muted, margin: "8px 0 0" }}>{join.cardinality}</p>
+              {join.notes.length > 0 && <ul style={{ ...muted, color: C.text, paddingLeft: 18, margin: "7px 0 0" }}>{join.notes.map(note => <li key={note} style={{ marginTop: 4 }}>{note}</li>)}</ul>}
+            </div>)}
+          </div> : <p style={muted}>This query does not contain a recognised JOIN clause. Source objects are still listed in the Sources and operations section.</p>}
         </section>
 
         <section style={panel}>
