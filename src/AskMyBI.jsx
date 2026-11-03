@@ -427,18 +427,40 @@ function buildWorkflowPlan(routes) {
     .slice(0, 5)
     .map((route, index) => ({
       number: index + 1,
+      intent: route.intent,
       agent: route.agent,
+      confidence: route.confidence,
       description: descriptions[route.intent] || `Process the ${route.intent} request`,
-      mode: "Read-only"
+      mode: "Read-only",
+      status: "Pending"
     }));
 }
 
-function buildOrchestratedAnswer(orchestration, tasks, reports, prompt) {
+async function executeWorkflowPlan(routes, tasks, reports, prompt, onStepUpdate) {
+  const plan = buildWorkflowPlan(routes);
+  const results = [];
+  for (const step of plan) {
+    onStepUpdate(step.number, "Running");
+    try {
+      const route = routes.find(item => item.intent === step.intent);
+      const answer = buildAnswer(step.intent, tasks, reports, prompt);
+      results.push(`[${step.agent} · ${Math.round((route?.confidence || 0) * 100)}%]\n${answer}`);
+      onStepUpdate(step.number, "Completed");
+    } catch (error) {
+      results.push(`[${step.agent}] Execution failed: ${error.message || "Unexpected error"}`);
+      onStepUpdate(step.number, "Failed");
+    }
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+  return results;
+}
+
+function buildOrchestratedAnswer(orchestration, tasks, reports, prompt, executedSections = []) {
   const { routes, entity } = orchestration;
   if (!routes.length) return null;
   const plan = buildWorkflowPlan(routes);
   const planText = plan.map(step => `${step.number}. ${step.agent} — ${step.description} [${step.mode}]`).join("\n");
-  const sections = routes.slice(0, 5).map(route => {
+  const sections = executedSections.length ? executedSections : routes.slice(0, 5).map(route => {
     const answer = buildAnswer(route.intent, tasks, reports, prompt);
     return `[${route.agent} · ${Math.round(route.confidence * 100)}%]\n${answer}`;
   });
@@ -581,6 +603,7 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
+  const [workflowSteps, setWorkflowSteps] = useState([]);
 
   useEffect(() => onSnapshot(collection(db, "tasks"), s => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))), []);
 
@@ -642,7 +665,12 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
         !["createTask", "completeTask", "deleteTask", "updatePriority", "updateDueDate", "updateStatus"].includes(intent);
 
       if (isInformationalOrchestrated) {
-        response = buildOrchestratedAnswer(orchestration, tasks, reports, text);
+        const plan = buildWorkflowPlan(agentRoutes);
+        setWorkflowSteps(plan.map(step => ({ ...step, status: "Pending" })));
+        const executedSections = await executeWorkflowPlan(agentRoutes, tasks, reports, text, (stepNumber, status) => {
+          setWorkflowSteps(current => current.map(step => step.number === stepNumber ? { ...step, status } : step));
+        });
+        response = buildOrchestratedAnswer(orchestration, tasks, reports, text, executedSections);
       } else {
       if (intent === "createTask") {
         const data = parseCreateTask(text);
@@ -705,6 +733,24 @@ export default function AskMyBI({ C, S, reports = [], currentUser }) {
     <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
       {QUICK_PROMPTS.map(p => <button key={p} onClick={() => send(p)} disabled={sending} style={{ ...S.btn(), fontSize: 11 }}>{p}</button>)}
     </div>
+
+    {workflowSteps.length > 0 && <div style={{ ...S.card, padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.text }}>Workflow execution</div>
+        <div style={{ fontSize: 10, color: C.textMuted }}>{workflowSteps.filter(step => step.status === "Completed").length}/{workflowSteps.length} completed</div>
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {workflowSteps.map(step => <div key={step.number} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12 }}>
+          <span style={{ width: 22, height: 22, display: "grid", placeItems: "center", borderRadius: 20, background: step.status === "Completed" ? "#DCFCE7" : step.status === "Failed" ? "#FEE2E2" : step.status === "Running" ? C.accentBg : C.bg, color: step.status === "Completed" ? "#15803D" : step.status === "Failed" ? "#B91C1C" : C.textMuted, fontWeight: 800 }}>{step.status === "Completed" ? "✓" : step.status === "Failed" ? "!" : step.number}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: C.text, fontWeight: 650 }}>{step.agent}</div>
+            <div style={{ color: C.textMuted, fontSize: 10 }}>{step.description}</div>
+          </div>
+          <span style={{ color: step.status === "Completed" ? "#15803D" : step.status === "Failed" ? "#B91C1C" : C.textMuted, fontSize: 10, fontWeight: 700 }}>{step.status}</span>
+        </div>)}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 10, color: C.textMuted }}>Read-only execution · No task data is changed by this workflow.</div>
+    </div>}
 
     {pendingAction && <div style={{ ...S.card, border: `1px solid ${C.accent}`, background: C.accentBg }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: C.accent, textTransform: "uppercase" }}>Approval Required</div>
