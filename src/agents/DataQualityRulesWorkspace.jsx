@@ -9,6 +9,7 @@ import {
   buildProfileRuleSuggestions
 } from "./dataQualityRules";
 import { createRuleSetExport, parseRuleSetImport, findRuleSetColumnReferences, remapRuleSetColumns } from "./ruleSetLibrary";
+import { analyzeQualityHistory } from "./dataQualityIntelligence";
 
 const STORAGE_KEY = "agenticBi.dataQualityRules.v1";
 const HISTORY_KEY = "agenticBi.dataQualityHistory.v1";
@@ -125,7 +126,7 @@ export default function DataQualityRulesWorkspace({ C }) {
 
   useEffect(() => {
     if (!result) return;
-    const snapshot = { fileName: result.fileName, timestamp: new Date().toISOString(), qualityPercentage: result.qualityPercentage, errors: result.errors, warnings: result.warnings, failed: result.failed, rowCount: result.rowCount };
+    const snapshot = { fileName: result.fileName, timestamp: new Date().toISOString(), qualityPercentage: result.qualityPercentage, errors: result.errors, warnings: result.warnings, failed: result.failed, rowCount: result.rowCount, ruleFailures: result.ruleResults.filter(item => item.failed > 0).map(item => ({ ruleName: item.ruleName, type: item.type, column: item.column, severity: item.severity, failed: item.failed })) };
     setHistory(previous => {
       const next = [snapshot, ...previous].slice(0, 100);
       try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch { /* Optional local history. */ }
@@ -183,6 +184,7 @@ export default function DataQualityRulesWorkspace({ C }) {
 
   const updateDraft = (key, value) => setDraft(previous => ({ ...previous, [key]: value }));
   const visibleIssues = useMemo(() => (result?.issues || []).filter(issue => filter === "all" || issue.severity === filter), [result, filter]);
+  const qualityIntelligence = useMemo(() => analyzeQualityHistory(history), [history]);
 
   const loadFile = async file => {
     if (!file) return;
@@ -393,6 +395,35 @@ export default function DataQualityRulesWorkspace({ C }) {
         <button onClick={runValidation} disabled={!rules.some(rule => rule.enabled !== false)} style={{ padding: "9px 14px", border: 0, borderRadius: 7, background: C.accent, color: "#fff", cursor: "pointer", fontWeight: 700, opacity: rules.some(rule => rule.enabled !== false) ? 1 : .5 }}>Run validation</button>
         <button onClick={() => { setRules([]); setResult(null); }} style={{ padding: "9px 12px", border: "1px solid " + C.border, borderRadius: 7, background: C.surface, color: C.text, cursor: "pointer" }}>Clear saved rules</button>
       </div>
+    </section>}
+
+    {history.length > 0 && <section style={panel(C)}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div><strong style={{ fontSize: 13 }}>Data quality intelligence</strong><p style={{ ...muted(C), margin: "3px 0 0" }}>Local, explainable insights from saved validation summaries. Comparisons are made only for matching file names and row counts.</p></div>
+        <span style={muted(C)}>{qualityIntelligence.snapshotCount} saved runs</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 10 }}>
+        <div>
+          <strong style={{ fontSize: 12 }}>Recurring failures</strong>
+          {qualityIntelligence.recurringFailures.length ? qualityIntelligence.recurringFailures.slice(0, 5).map(item => <div key={item.key} style={{ border: "1px solid " + C.border, borderRadius: 8, padding: 9, marginTop: 7 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong style={{ fontSize: 11 }}>{item.ruleName}</strong><span style={{ color: item.severity === "error" ? "#D64550" : "#C47A12", fontSize: 10 }}>{item.runCount} runs · {item.totalFailed} fails</span></div>
+            <p style={{ ...muted(C), margin: "4px 0 0" }}>{item.fileName} · {item.column}</p>
+            <p style={{ ...muted(C), margin: "4px 0 0" }}>{item.recommendation}</p>
+          </div>) : <p style={muted(C)}>No recurring rule failures detected yet. A rule must fail in at least two saved runs to appear here.</p>}
+        </div>
+        <div>
+          <strong style={{ fontSize: 12 }}>Quality score movement</strong>
+          {qualityIntelligence.trends.slice(0, 5).map(item => <div key={item.fileName} style={{ border: "1px solid " + C.border, borderRadius: 8, padding: 9, marginTop: 7 }}>
+            <strong style={{ fontSize: 11 }}>{item.fileName}</strong>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 4, fontSize: 11 }}>
+              <span style={{ color: C.textMuted }}>{item.runCount} saved run(s)</span>
+              <strong style={{ color: item.delta == null ? C.textMuted : item.delta > 0 ? "#0D9B3A" : item.delta < 0 ? "#D64550" : C.text }}>{item.delta == null ? "Need comparable run" : (item.delta > 0 ? "+" : "") + item.delta + " pts"}</strong>
+            </div>
+            <p style={{ ...muted(C), margin: "4px 0 0" }}>{item.latestScore == null ? "No score available" : "Latest score: " + item.latestScore + "%"}</p>
+          </div>)}
+        </div>
+      </div>
+      <p style={{ ...muted(C), margin: "10px 0 0" }}>This is deterministic trend analysis, not AI root-cause detection. Only compact rule-failure summaries are retained; source CSV rows are not stored.</p>
     </section>}
 
     {error && <p role="alert" style={{ color: "#D64550", fontSize: 12, margin: 0 }}>{error}</p>}
