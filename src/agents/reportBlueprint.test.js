@@ -26,8 +26,8 @@ test("flags incomplete data and handles datasets without chartable combinations"
     records: [{ comment: "A", owner: "" }, { comment: "B", owner: "Alex" }]
   });
   assert.ok(result.insights.some(insight => insight.title === "Review missing data"));
-  assert.equal(result.visuals.length, 0);
-  assert.ok(result.insights.some(insight => insight.title === "Limited chart combinations detected"));
+  assert.ok(result.visuals.some(visual => visual.chartType === "Donut chart"));
+  assert.ok(!result.insights.some(insight => insight.title === "Limited chart combinations detected"));
 });
 
 test("rejects malformed dataset input", () => {
