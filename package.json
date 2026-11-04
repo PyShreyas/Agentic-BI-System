@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:frontend": "node --test src/agents/ruleSetLibrary.test.js src/agents/dataQualityIntelligence.test.js"
+    "test:frontend": "node --test src/agents/ruleSetLibrary.test.js src/agents/dataQualityIntelligence.test.js src/agents/reportBlueprint.test.js"
   },
   "dependencies": {
     "firebase": "^10.7.0",
