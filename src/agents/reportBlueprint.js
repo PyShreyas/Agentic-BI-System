@@ -1,5 +1,5 @@
-import { parseCsvText } from "./dataReconciliation";
-import { profileDataset } from "./dataProfiling";
+import { parseCsvText } from "./dataReconciliation.js";
+import { profileDataset } from "./dataProfiling.js";
 
 const MAX_REPORT_FILE_BYTES = 10 * 1024 * 1024;
 
